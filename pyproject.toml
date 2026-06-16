@@ -1,0 +1,44 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "orcp-sim"
+version = "0.1.0"
+description = "Reference simulator for the Open Robot Control Protocol (ORCP)"
+readme = "README.md"
+license = {text = "MIT"}
+requires-python = ">=3.9"
+authors = [
+    {name = "ORCP Contributors"},
+]
+keywords = ["robot", "motor", "serial", "protocol", "orcp", "simulator"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Education",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering",
+]
+# No runtime dependencies — standard library only (pty, select, json, ...).
+dependencies = []
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/orcp-protocol/orcp-sim"
+Specification = "https://github.com/orcp-protocol/orcp"
+
+[project.scripts]
+orcp-sim = "orcp_sim:main"
+
+[tool.setuptools]
+py-modules = ["orcp_sim"]
