@@ -2,13 +2,20 @@
 import time
 import pytest
 
-from orcp_sim import ORCPSim
+from orcp_sim import ORCPSim, MC1_PROFILE
 
 
 @pytest.fixture
 def sim(tmp_path):
     """A Level 2 simulator with an isolated persistent-config file."""
     return ORCPSim(level=2, config_file=str(tmp_path / "cfg.json"))
+
+
+@pytest.fixture
+def mc1(tmp_path):
+    """A simulator running the MC1 profile."""
+    return ORCPSim(profile=MC1_PROFILE, config_file=str(tmp_path / "mc1.json"),
+                   aux5v_amps=1.0, aux5v_volts=5.0)
 
 
 # ---------------------------------------------------------------------------
@@ -244,6 +251,66 @@ def test_streaming_emits_frames(sim):
 # ---------------------------------------------------------------------------
 # WebSocket transport (optional 'web' extra)
 # ---------------------------------------------------------------------------
+
+# ---------------------------------------------------------------------------
+# Implementation profiles — MC1
+# ---------------------------------------------------------------------------
+
+def test_base_profile_has_no_vendor_keys(sim):
+    # The generic reference must not carry MC1-specific keys.
+    assert "code=BAD_ARG" in sim.handle_command("SET batt.hyst_v=0.3")
+    assert len(sim.cfg) == 15
+
+
+def test_mc1_identity(mc1):
+    r = mc1.handle_command("INFO")
+    assert "hw=MC1" in r
+    assert "bl=1.1.1" in r
+    assert "fw=1.6.0" in r
+    assert "level=2" in r
+    assert "vendor=" not in r          # MC1 INFO carries no vendor/model fields
+
+
+def test_mc1_full_key_surface(mc1):
+    assert len(mc1.cfg) == 42
+    # the key that originally failed against the generic sim:
+    assert mc1.handle_command("SET batt.hyst_v=0.3") == "OK SET batt.hyst_v=0.300"
+    assert mc1.handle_command("GET batt.hyst_v") == "OK GET batt.hyst_v=0.300"
+    # a few more MC1-only keys:
+    for key in ("aux5v.warn_amps", "current.offset_left", "motor.i_max", "current_loop.enable"):
+        assert mc1.handle_command(f"GET {key}").startswith("OK GET " + key + "=")
+
+
+def test_mc1_renders_all_values_as_float(mc1):
+    # MC1 has no int_keys — counts_per_rev comes back as 2249.000, not 2249.
+    assert mc1.handle_command("GET kin.counts_per_rev") == "OK GET kin.counts_per_rev=2249.000"
+
+
+def test_mc1_status_battery_is_band(mc1):
+    assert mc1.handle_command("STATUS").rstrip().endswith("battery=OK")
+
+
+def test_mc1_get_all_is_42_keys(mc1):
+    r = mc1.handle_command("GET ALL")
+    assert r.startswith("OK GET ")
+    assert r.count("=") == 42
+
+
+def test_mc1_aux5v_warn_push(tmp_path):
+    # Over-current on the 5V rail raises ! WARN AUX5V (MC1 vendor push).
+    s = ORCPSim(profile=MC1_PROFILE, config_file=str(tmp_path / "a.json"),
+                aux5v_amps=6.0)        # warn_amps default 4.0
+    s.pending_push.clear()
+    s.control_tick()
+    assert any(m.startswith("! WARN AUX5V state=warn") for m in s.pending_push)
+
+
+def test_base_has_no_aux5v_warn(sim):
+    sim.vbat = 12.4
+    sim.pending_push.clear()
+    sim.control_tick()
+    assert not any("AUX5V" in m for m in sim.pending_push)
+
 
 def test_websocket_transport(tmp_path):
     websockets = pytest.importorskip("websockets")

@@ -85,6 +85,26 @@ Notable v1.1 behaviours the simulator demonstrates:
 - Safety faults latch until `ENABLE ON`; `! FAULT` and `! WARN` push messages
   are emitted on transitions.
 
+## Profiles
+
+A **profile** makes the simulator emulate a specific controller — its identity,
+config-key surface, vendor command modes, and push events — layered over the
+generic v1.1 core. Select one with `--profile`:
+
+| Profile | What it emulates |
+|---------|------------------|
+| `base` (default) | Generic, fully-conformant ORCP v1.1 controller — the standard reference (15 standard §7 config keys). |
+| `mc1` | First Layer Robotics MC1: the full 42-key config surface, `hw=MC1` / `bl=` in `INFO`, band-label battery, and the `! WARN AUX5V` vendor push. |
+
+```bash
+orcp-sim --profile mc1 --ws 8765      # emulate an MC1 over WebSocket
+orcp-sim --profile mc1 --aux5v-amps 6 # trip the 5V-rail warning (! WARN AUX5V)
+```
+
+The `base` profile is the pure standard reference and is kept free of any
+vendor-specific surface. New profiles (including third-party hardware) are a
+planned extension; today the registry is built in.
+
 ## Connecting from a browser (web configurator)
 
 Browsers reach real boards over the Web Serial API (USB CDC) and **cannot open a
