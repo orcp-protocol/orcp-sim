@@ -29,8 +29,13 @@ classifiers = [
 dependencies = []
 
 [project.optional-dependencies]
+# WebSocket transport (--ws) for browser hosts, e.g. the web configurator.
+web = [
+    "websockets>=11",
+]
 dev = [
     "pytest>=7.0",
+    "websockets>=11",
 ]
 
 [project.urls]

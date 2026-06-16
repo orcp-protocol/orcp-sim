@@ -85,6 +85,22 @@ Notable v1.1 behaviours the simulator demonstrates:
 - Safety faults latch until `ENABLE ON`; `! FAULT` and `! WARN` push messages
   are emitted on transitions.
 
+## Connecting from a browser (web configurator)
+
+Browsers reach real boards over the Web Serial API (USB CDC) and **cannot open a
+PTY**, so to drive the simulator from a browser tool — such as the MC1 web
+configurator — run it over a WebSocket instead:
+
+```bash
+pip install 'orcp-sim[web]'
+orcp-sim --ws 8765            # serve on ws://localhost:8765
+```
+
+The WebSocket carries the identical ORCP line protocol, so the host only needs a
+small transport switch (Web Serial for hardware, WebSocket for the simulator).
+See [docs/websocket-transport.md](docs/websocket-transport.md) for the full
+contract and a reference client.
+
 ## Configuration persistence
 
 `SAVE`/`LOAD` persist the standard configuration parameters (ORCP §7) to a JSON

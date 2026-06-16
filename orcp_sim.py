@@ -735,6 +735,107 @@ def run_simulator(level=2, link_path=None, vbat=12.4, estop=False, config_file=N
         print("Simulator stopped.")
 
 
+# ---------------------------------------------------------------------------
+# WebSocket transport (optional — for browser hosts, e.g. the web configurator)
+#
+# Browsers reach real boards over the Web Serial API (USB CDC), but cannot open
+# a PTY. ORCP is transport-agnostic, so a WebSocket carrying the identical ASCII
+# byte stream lets a browser talk to the simulator for hardware-free testing.
+# Requires the 'web' extra (the `websockets` package); the PTY mode stays
+# dependency-free.
+# ---------------------------------------------------------------------------
+
+async def _ws_run(sim, host, port, ready=None, stop=None):
+    """Serve `sim` over a WebSocket. Each text frame carries one or more
+    newline-terminated ORCP lines; clients treat the stream exactly like the
+    serial byte stream. `ready`/`stop` are test hooks (publish bound port /
+    request shutdown)."""
+    import asyncio
+    import websockets
+
+    clients = set()
+
+    async def handler(ws):
+        clients.add(ws)
+        try:
+            async for message in ws:
+                text = message if isinstance(message, str) else message.decode('ascii', 'replace')
+                for line in text.split('\n'):
+                    if not line.strip():
+                        continue
+                    resp = sim.handle_command(line)
+                    if resp is not None:
+                        await ws.send(resp + '\n')
+        except Exception:
+            pass
+        finally:
+            clients.discard(ws)
+
+    server = await websockets.serve(handler, host, port)
+    if ready is not None and not ready.done():
+        ready.set_result(server.sockets[0].getsockname()[1])
+
+    loop = asyncio.get_running_loop()
+    next_t = loop.time()
+    try:
+        while not (stop is not None and stop.is_set()):
+            sim.control_tick()
+            out = list(sim.pending_push)
+            sim.pending_push.clear()
+            line = sim.get_stream_line()
+            if line:
+                out.append(line)
+            if out and clients:
+                dead = set()
+                for ws in list(clients):
+                    for m in out:
+                        try:
+                            await ws.send(m + '\n')
+                        except Exception:
+                            dead.add(ws)
+                clients -= dead
+            next_t += CONTROL_DT
+            await asyncio.sleep(max(0.0, next_t - loop.time()))
+    finally:
+        server.close()
+        await server.wait_closed()
+
+
+def run_ws_simulator(level=2, port=8765, vbat=12.4, estop=False, config_file=None):
+    import asyncio
+    try:
+        import websockets  # noqa: F401
+    except ImportError:
+        print("WebSocket mode requires the 'web' extra:\n"
+              "    pip install 'orcp-sim[web]'    (or: pip install websockets)",
+              file=sys.stderr)
+        sys.exit(1)
+
+    import signal
+
+    sim = ORCPSim(level=level, config_file=config_file, vbat=vbat, estop=estop)
+    print(f"ORCP Reference Simulator — proto ORCP/{PROTO_VERSION}, fw {FW_VERSION}, Level {level}")
+    print(f"WebSocket endpoint: ws://localhost:{port}")
+    print(f"Preset: {sim.preset} | Battery: {sim.vbat:.1f}V | Config: {config_file or '(none)'}")
+    print("Point the web configurator's simulator/dev mode at this URL. (Ctrl+C to quit)")
+
+    async def _main():
+        stop = asyncio.Event()
+        loop = asyncio.get_running_loop()
+        for sig in (signal.SIGINT, signal.SIGTERM):
+            try:
+                loop.add_signal_handler(sig, stop.set)
+            except NotImplementedError:   # e.g. non-Unix
+                pass
+        await _ws_run(sim, "localhost", port, stop=stop)
+
+    try:
+        asyncio.run(_main())
+    except KeyboardInterrupt:
+        pass
+    print("\nSimulator stopped.")
+
+
 def main():
     parser = argparse.ArgumentParser(description="ORCP Reference Simulator (ORCP v1.1)")
     parser.add_argument("--level", type=int, choices=(1, 2, 3), default=2,
@@ -748,10 +849,17 @@ def main():
     parser.add_argument("--config-file", type=str,
                         default=os.path.join(tempfile.gettempdir(), "orcp_sim_config.json"),
                         help="Persistent config store for SAVE/LOAD (default: temp dir)")
+    parser.add_argument("--ws", type=int, metavar="PORT", default=None,
+                        help="Serve over a WebSocket on PORT (for browser hosts like the "
+                             "web configurator) instead of a PTY. Needs the 'web' extra.")
     args = parser.parse_args()
 
-    run_simulator(level=args.level, link_path=args.link, vbat=args.vbat,
-                  estop=args.estop, config_file=args.config_file)
+    if args.ws is not None:
+        run_ws_simulator(level=args.level, port=args.ws, vbat=args.vbat,
+                         estop=args.estop, config_file=args.config_file)
+    else:
+        run_simulator(level=args.level, link_path=args.link, vbat=args.vbat,
+                      estop=args.estop, config_file=args.config_file)
 
 
 if __name__ == "__main__":

@@ -239,3 +239,34 @@ def test_streaming_emits_frames(sim):
     assert frames[0].startswith("! STREAM tl=")
     for field in ("vl=", "dl=", "vbat=", "battery="):
         assert field in frames[0]
+
+
+# ---------------------------------------------------------------------------
+# WebSocket transport (optional 'web' extra)
+# ---------------------------------------------------------------------------
+
+def test_websocket_transport(tmp_path):
+    websockets = pytest.importorskip("websockets")
+    import asyncio
+    from orcp_sim import ORCPSim, _ws_run
+
+    async def scenario():
+        s = ORCPSim(level=2, config_file=str(tmp_path / "ws.json"))
+        loop = asyncio.get_running_loop()
+        ready = loop.create_future()
+        stop = asyncio.Event()
+        task = asyncio.create_task(_ws_run(s, "localhost", 0, ready=ready, stop=stop))
+        try:
+            port = await asyncio.wait_for(ready, 3)
+            async with websockets.connect(f"ws://localhost:{port}") as ws:
+                await ws.send("INFO\n")
+                r = await asyncio.wait_for(ws.recv(), 3)
+                assert "proto=ORCP/1.1" in r and "level=2" in r
+                await ws.send("SET pid.kp=0.080\n")
+                r2 = await asyncio.wait_for(ws.recv(), 3)
+                assert "OK SET pid.kp=0.080" in r2
+        finally:
+            stop.set()
+            await asyncio.wait_for(task, 3)
+
+    asyncio.run(scenario())
