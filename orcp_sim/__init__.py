@@ -13,7 +13,7 @@ surface (identity, config-key set, vendor command modes, push events) layered
 over the generic v1.1 core:
 
     --profile base   generic, fully-conformant ORCP v1.1 controller  [default]
-    --profile mc1    First Layer Robotics MC1 (42-key surface, ! WARN AUX5V, ...)
+    --profile mc1    First Layer Robotics MC1 (46-key surface, ! WARN AUX5V, ...)
 
 Only `base` (the standard reference, which must not drift) is built into the
 core. Every other profile — including MC1 — is a JSON data file: bundled ones
@@ -123,7 +123,7 @@ _CORE_REQUIRED_KEYS = {
     "batt.full_v", "batt.low_v", "batt.critical_v",
 }
 # Additionally required only when the profile models a 5 V aux rail.
-_AUX5V_REQUIRED_KEYS = {"aux5v.warn_amps", "aux5v.warn_volts"}
+_AUX5V_REQUIRED_KEYS = {"aux5v.i_warn", "aux5v.v_warn"}
 
 
 def load_profile_file(path):
@@ -446,8 +446,8 @@ class ORCPSim:
                 self.batt_warned = False
         # 5 V aux rail warning (vendor extension, e.g. MC1).
         if self.has_aux5v and "AUX5V" in self.warns and self.level >= 2:
-            over = (self.aux5v_i > self.cfg["aux5v.warn_amps"]
-                    or self.aux5v_v < self.cfg["aux5v.warn_volts"])
+            over = (self.aux5v_i > self.cfg["aux5v.i_warn"]
+                    or self.aux5v_v < self.cfg["aux5v.v_warn"])
             if over and not self.aux5v_warned:
                 self.pending_push.append(
                     f"! WARN AUX5V state=warn i={self.aux5v_i:.3f} v={self.aux5v_v:.3f}")

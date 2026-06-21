@@ -266,18 +266,18 @@ def test_mc1_identity(mc1):
     r = mc1.handle_command("INFO")
     assert "hw=MC1" in r
     assert "bl=1.1.1" in r
-    assert "fw=1.7.0" in r
+    assert "fw=1.8.0" in r
     assert "level=2" in r
     assert "vendor=" not in r          # MC1 INFO carries no vendor/model fields
 
 
 def test_mc1_full_key_surface(mc1):
-    assert len(mc1.cfg) == 43
+    assert len(mc1.cfg) == 46
     # the key that originally failed against the generic sim:
     assert mc1.handle_command("SET batt.hyst_v=0.3") == "OK SET batt.hyst_v=0.300"
     assert mc1.handle_command("GET batt.hyst_v") == "OK GET batt.hyst_v=0.300"
     # a few more MC1-only keys:
-    for key in ("aux5v.warn_amps", "current.offset_left", "motor.i_max", "current_loop.enable"):
+    for key in ("aux5v.i_warn", "aux5v.i_max", "motor.stall_vel", "current.offset_left", "motor.i_max", "current_loop.enable"):
         assert mc1.handle_command(f"GET {key}").startswith("OK GET " + key + "=")
 
 
@@ -290,10 +290,10 @@ def test_mc1_status_battery_is_band(mc1):
     assert mc1.handle_command("STATUS").rstrip().endswith("battery=OK")
 
 
-def test_mc1_get_all_is_43_keys(mc1):
+def test_mc1_get_all_is_46_keys(mc1):
     r = mc1.handle_command("GET ALL")
     assert r.startswith("OK GET ")
-    assert r.count("=") == 43
+    assert r.count("=") == 46
 
 
 def test_mc1_aux5v_warn_push(tmp_path):
@@ -426,7 +426,7 @@ def test_mc1_ships_as_bundled_profile():
     from orcp_sim import PROFILES
     assert "mc1" in PROFILES
     assert PROFILES["mc1"]["identity"]["hw"] == "MC1"
-    assert len(PROFILES["mc1"]["config"]) == 43
+    assert len(PROFILES["mc1"]["config"]) == 46
 
 
 def test_mc1_preset_slow_reports_timeout(mc1):

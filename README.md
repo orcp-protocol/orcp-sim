@@ -103,7 +103,7 @@ Select a bundled profile by name with `--profile`, or load your own file with
 | Profile | Ships as | What it emulates |
 |---------|----------|------------------|
 | `base` (default) | built into the core | Generic, fully-conformant ORCP v1.1 controller — the standard reference (15 standard §7 config keys). |
-| `mc1` | `orcp_sim/profiles/mc1.json` | First Layer Robotics MC1: the full 42-key config surface, `hw=MC1` / `bl=` in `INFO`, band-label battery, and the `! WARN AUX5V` vendor push. |
+| `mc1` | `orcp_sim/profiles/mc1.json` | First Layer Robotics MC1: the full 46-key config surface, `hw=MC1` / `bl=` in `INFO`, band-label battery, and the `! WARN AUX5V` vendor push. |
 
 ```bash
 orcp-sim --profile mc1 --ws 8765      # emulate an MC1 over WebSocket
