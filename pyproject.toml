@@ -46,4 +46,9 @@ Specification = "https://github.com/orcp-protocol/orcp"
 orcp-sim = "orcp_sim:main"
 
 [tool.setuptools]
-py-modules = ["orcp_sim"]
+packages = ["orcp_sim"]
+include-package-data = true
+
+[tool.setuptools.package-data]
+# Ship the bundled vendor profiles inside the wheel.
+orcp_sim = ["profiles/*.json"]

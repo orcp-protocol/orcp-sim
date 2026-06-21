@@ -15,13 +15,17 @@ over the generic v1.1 core:
     --profile base   generic, fully-conformant ORCP v1.1 controller  [default]
     --profile mc1    First Layer Robotics MC1 (42-key surface, ! WARN AUX5V, ...)
 
-The base profile is the pure standard reference and must not drift. A minimal
-in-module profile registry is used here; a pluggable (pip entry-point) version
-is a future direction.
+Only `base` (the standard reference, which must not drift) is built into the
+core. Every other profile — including MC1 — is a JSON data file: bundled ones
+live in profiles/ and are discovered by name; private ones are loaded with
+--profile-file. So a vendor adds a device with a data file, not code. A pip
+entry-point plugin mechanism — for profiles that need custom behaviour, not just
+a declarative surface — is a future direction.
 
 Usage:
-    python3 orcp_sim.py                       # base, Level 2, auto PTY
-    python3 orcp_sim.py --profile mc1         # emulate an MC1
+    python3 -m orcp_sim                       # base, Level 2, auto PTY
+    python3 -m orcp_sim --profile mc1         # emulate an MC1 (bundled profile)
+    python3 -m orcp_sim --profile-file acme.json   # emulate a vendor device
     python3 orcp_sim.py --ws 8765             # serve over WebSocket
     python3 orcp_sim.py --link /tmp/orcp      # also symlink the PTY
 """
@@ -103,64 +107,101 @@ BASE_PROFILE = {
     "aux5v": False,
 }
 
-# First Layer Robotics MC1 — full 42-key surface (mirrors the MC1 firmware
-# config table). Keys are ordered to match the firmware's GET ALL output, and
-# all values render as %.3f (int_keys empty), exactly like the MC1.
-MC1_PROFILE = {
-    "name": "mc1",
-    "identity": {"hw": "MC1", "level": 2, "fw": "1.6.0", "info_extra": {"bl": "1.1.1"}},
-    "config": [
-        ("aux5v.shunt_ohms",     0.01,    0.001,  10.0),
-        ("aux5v.max_amps",       10.0,    0.1,    20.0),
-        ("aux5v.warn_amps",      4.0,     0.0,    20.0),
-        ("aux5v.warn_volts",     4.7,     0.0,    6.0),
-        ("batt.divider_ratio",   5.7,     1.0,    20.0),
-        ("batt.full_v",          12.6,    5.0,    30.0),
-        ("batt.low_v",           10.2,    5.0,    30.0),
-        ("batt.critical_v",      9.6,     5.0,    30.0),
-        ("batt.hyst_v",          0.2,     0.0,    2.0),
-        ("current.scale",        3.333,   0.1,    20.0),
-        ("current.offset_left",  0.0,    -5.0,    5.0),
-        ("current.offset_right", 0.0,    -5.0,    5.0),
-        ("current_loop.enable",  0,       0.0,    1.0),
-        ("encoder.filter_alpha", 0.2,     0.01,   1.0),
-        ("encoder.invert.left",  0,       0.0,    1.0),
-        ("encoder.invert.right", 1,       0.0,    1.0),
-        ("hb.timeout_ms",        500,     10,     60000),
-        ("kin.track_width",      0.175,   0.05,   1.0),
-        ("kin.wheel_radius",     0.049,   0.01,   0.5),
-        ("kin.counts_per_rev",   2249,    0,      10000),
-        ("kin.max_v",            1.0,     0.05,   5.0),
-        ("kin.max_w",            3.0,     0.1,    20.0),
-        ("kin.max_accel",        25.0,    0.0,    100.0),
-        ("motor.invert.left",    0,       0.0,    1.0),
-        ("motor.invert.right",   1,       0.0,    1.0),
-        ("motor.v_max",          12.0,    0.0,    30.0),
-        ("motor.i_max",          4.0,     0.0,    20.0),
-        ("motor.i_fault",        5.0,     0.0,    20.0),
-        ("motor.i_max_time_ms",  500,     100,    30000),
-        ("motor.max_duty_accel", 5.0,     0.0,    100.0),
-        ("motor.max_rads",       20.9,    0.1,    100.0),
-        ("mcu.temp_v25",         1.43,    1.0,    2.0),
-        ("mcu.temp_slope",       0.00430, 0.001,  0.010),
-        ("normal.duty_limit",    0.90,    0.05,   1.0),
-        ("normal.timeout_ms",    250,     10,     60000),
-        ("pid.kp",               0.05,    0.0,    10.0),
-        ("pid.ki",               0.3,     0.0,    50.0),
-        ("pid.kd",               0.0,     0.0,    1.0),
-        ("pid.kp_i",             0.0,     0.0,    10.0),
-        ("pid.ki_i",             0.0,     0.0,    500.0),
-        ("slow.duty_limit",      0.30,    0.05,   1.0),
-        ("stream.rate",          10,      1.0,    50.0),
-    ],
-    "int_keys": set(),          # MC1 renders every value as %.3f
-    "wheel_modes": ["DUTY"],
-    "warns": ["BATT", "AUX5V"],
-    "battery": "band",
-    "aux5v": True,
-}
+# Vendor profiles (other than `base`) ship as JSON data files in profiles/ and
+# are discovered into PROFILES below. MC1 is profiles/mc1.json — the first
+# worked example of the bundled tier; a vendor adds their own the same way.
 
-PROFILES = {"base": BASE_PROFILE, "mc1": MC1_PROFILE}
+# Keys the core control loop reads unconditionally — a profile that drops any
+# of these would crash mid-run, so load_profile_file rejects it up front with a
+# clear message. (slow.timeout_ms is intentionally NOT here: it's optional, read
+# with a default of 0, so a device like the MC1 — whose SLOW timeout is a fixed
+# constant, not a settable key — is fully valid without it.)
+_CORE_REQUIRED_KEYS = {
+    "pid.kp", "pid.ki", "pid.kd",
+    "slow.duty_limit", "normal.duty_limit", "normal.timeout_ms", "hb.timeout_ms",
+    "kin.counts_per_rev", "kin.wheel_radius", "kin.track_width", "kin.max_accel",
+    "batt.full_v", "batt.low_v", "batt.critical_v",
+}
+# Additionally required only when the profile models a 5 V aux rail.
+_AUX5V_REQUIRED_KEYS = {"aux5v.warn_amps", "aux5v.warn_volts"}
+
+
+def load_profile_file(path):
+    """Load a vendor profile from a JSON file (``--profile-file`` or bundled).
+
+    The JSON mirrors BASE_PROFILE's shape. Two conveniences bridge JSON and the
+    Python schema: the ``int_keys`` and ``warns`` fields are JSON arrays here
+    and coerced to sets; ``config`` rows are ``[name, default, min, max]`` arrays
+    and coerced to tuples. Optional behaviour flags default to a generic v1.1
+    controller.
+
+    Validation is deliberately strict and gives a clear message on the common
+    mistakes (missing field, wrong config-row arity, dropping a key the core
+    relies on) rather than failing later with a KeyError.
+    """
+    with open(path) as f:
+        data = json.load(f)
+
+    for field in ("name", "identity", "config"):
+        if field not in data:
+            raise ValueError(f"profile file {path}: missing required field '{field}'")
+
+    ident = data["identity"]
+    for field in ("hw", "fw", "level"):
+        if field not in ident:
+            raise ValueError(f"profile file {path}: identity must include '{field}'")
+
+    cfg = []
+    for row in data["config"]:
+        if len(row) != 4:
+            raise ValueError(
+                f"profile file {path}: each config row must be "
+                f"[name, default, min, max]; got {row!r}")
+        name, default, mn, mx = row
+        cfg.append((name, default, mn, mx))
+    data["config"] = cfg
+
+    data["int_keys"] = set(data.get("int_keys", []))
+    data["warns"] = set(data.get("warns", []))
+    data.setdefault("wheel_modes", [])
+    data.setdefault("battery", "percent")
+    data.setdefault("aux5v", False)
+
+    required = set(_CORE_REQUIRED_KEYS)
+    if data.get("aux5v"):
+        required |= _AUX5V_REQUIRED_KEYS
+    missing = required - {name for name, *_ in cfg}
+    if missing:
+        raise ValueError(
+            f"profile file {path}: config is missing keys the core requires: "
+            f"{', '.join(sorted(missing))}")
+
+    return data
+
+
+# ---------------------------------------------------------------------------
+# Profile registry: the built-in `base` standard reference, plus every bundled
+# vendor profile discovered from profiles/*.json. A vendor gets a first-class
+# `--profile <name>` by contributing a profiles/<name>.json data file — exactly
+# how MC1 ships (see the README "Creating a profile" section).
+# ---------------------------------------------------------------------------
+_PROFILE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "profiles")
+
+
+def _discover_profiles():
+    found = {"base": BASE_PROFILE}
+    if os.path.isdir(_PROFILE_DIR):
+        for fn in sorted(os.listdir(_PROFILE_DIR)):
+            if fn.endswith(".json"):
+                prof = load_profile_file(os.path.join(_PROFILE_DIR, fn))
+                found[prof["name"]] = prof
+    return found
+
+
+PROFILES = _discover_profiles()
+# Back-compat alias: MC1 used to be an in-module dict; it now ships as
+# profiles/mc1.json but stays importable as orcp_sim.MC1_PROFILE.
+MC1_PROFILE = PROFILES.get("mc1")
 
 # ---------------------------------------------------------------------------
 # PID controller
@@ -622,7 +663,9 @@ class ORCPSim:
 
     def _preset_response(self, p):
         if p == "SLOW":
-            timeout = self.cfg["slow.timeout_ms"]; enreq = 0; duty = self.cfg["slow.duty_limit"]
+            # slow.timeout_ms is optional (e.g. the MC1 has no such config key —
+            # its SLOW timeout is a fixed 0); default to 0 when absent.
+            timeout = self.cfg.get("slow.timeout_ms", 0); enreq = 0; duty = self.cfg["slow.duty_limit"]
         else:
             timeout = self.cfg["normal.timeout_ms"]; enreq = 1; duty = self.cfg["normal.duty_limit"]
         hb = 1 if (p == "NORMAL" and self.level >= 2) else 0
@@ -911,7 +954,10 @@ def run_ws_simulator(sim, port=8765):
 def main():
     parser = argparse.ArgumentParser(description="ORCP Reference Simulator (ORCP v1.1)")
     parser.add_argument("--profile", choices=sorted(PROFILES), default="base",
-                        help="Controller profile to emulate (default: base = generic v1.1)")
+                        help="Built-in controller profile to emulate (default: base = generic v1.1)")
+    parser.add_argument("--profile-file", type=str, default=None, metavar="PATH",
+                        help="Load a vendor profile from a JSON file (overrides --profile). "
+                             "See the README 'Creating a profile' section.")
     parser.add_argument("--level", type=int, choices=(1, 2, 3), default=None,
                         help="Override the profile's conformance level (1/2/3)")
     parser.add_argument("--link", "-l", type=str, default=None,
@@ -932,7 +978,15 @@ def main():
                              "Needs the 'web' extra.")
     args = parser.parse_args()
 
-    sim = ORCPSim(profile=PROFILES[args.profile], level=args.level,
+    if args.profile_file is not None:
+        try:
+            profile = load_profile_file(args.profile_file)
+        except (OSError, ValueError, json.JSONDecodeError) as e:
+            parser.error(f"could not load --profile-file: {e}")
+    else:
+        profile = PROFILES[args.profile]
+
+    sim = ORCPSim(profile=profile, level=args.level,
                   config_file=args.config_file, vbat=args.vbat, estop=args.estop,
                   aux5v_amps=args.aux5v_amps, aux5v_volts=args.aux5v_volts)
 

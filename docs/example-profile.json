@@ -1,0 +1,35 @@
+{
+  "name": "acme",
+  "identity": {
+    "hw": "ACME-DRIVE",
+    "fw": "2.3.0",
+    "level": 2,
+    "vendor": "Acme Robotics",
+    "model": "Drive-X",
+    "info_extra": { "bl": "1.0.0" }
+  },
+  "config": [
+    ["kin.counts_per_rev", 4096,  0,    20000],
+    ["kin.wheel_radius",   0.06,  0.01, 0.5],
+    ["kin.track_width",    0.30,  0.05, 1.0],
+    ["kin.max_accel",      12.0,  0.0,  100.0],
+    ["pid.kp",             0.08,  0.0,  10.0],
+    ["pid.ki",             0.4,   0.0,  50.0],
+    ["pid.kd",             0.0,   0.0,  1.0],
+    ["batt.full_v",        25.2,  5.0,  30.0],
+    ["batt.low_v",         21.0,  5.0,  30.0],
+    ["batt.critical_v",    19.8,  5.0,  30.0],
+    ["slow.duty_limit",    0.30,  0.05, 1.0],
+    ["normal.duty_limit",  1.00,  0.05, 1.0],
+    ["slow.timeout_ms",    0,     0,    60000],
+    ["normal.timeout_ms",  250,   0,    60000],
+    ["hb.timeout_ms",      400,   10,   60000],
+
+    ["acme.led_brightness", 0.5,  0.0,  1.0]
+  ],
+  "int_keys": ["kin.counts_per_rev", "slow.timeout_ms", "normal.timeout_ms", "hb.timeout_ms"],
+  "wheel_modes": ["DUTY"],
+  "warns": ["BATT"],
+  "battery": "band",
+  "aux5v": false
+}

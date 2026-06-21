@@ -266,13 +266,13 @@ def test_mc1_identity(mc1):
     r = mc1.handle_command("INFO")
     assert "hw=MC1" in r
     assert "bl=1.1.1" in r
-    assert "fw=1.6.0" in r
+    assert "fw=1.7.0" in r
     assert "level=2" in r
     assert "vendor=" not in r          # MC1 INFO carries no vendor/model fields
 
 
 def test_mc1_full_key_surface(mc1):
-    assert len(mc1.cfg) == 42
+    assert len(mc1.cfg) == 43
     # the key that originally failed against the generic sim:
     assert mc1.handle_command("SET batt.hyst_v=0.3") == "OK SET batt.hyst_v=0.300"
     assert mc1.handle_command("GET batt.hyst_v") == "OK GET batt.hyst_v=0.300"
@@ -290,10 +290,10 @@ def test_mc1_status_battery_is_band(mc1):
     assert mc1.handle_command("STATUS").rstrip().endswith("battery=OK")
 
 
-def test_mc1_get_all_is_42_keys(mc1):
+def test_mc1_get_all_is_43_keys(mc1):
     r = mc1.handle_command("GET ALL")
     assert r.startswith("OK GET ")
-    assert r.count("=") == 42
+    assert r.count("=") == 43
 
 
 def test_mc1_aux5v_warn_push(tmp_path):
@@ -337,3 +337,111 @@ def test_websocket_transport(tmp_path):
             await asyncio.wait_for(task, 3)
 
     asyncio.run(scenario())
+
+
+# ---------------------------------------------------------------------------
+# Vendor profile files (--profile-file)
+# ---------------------------------------------------------------------------
+import json
+import os
+
+from orcp_sim import load_profile_file, BASE_PROFILE
+
+_EXAMPLE = os.path.join(os.path.dirname(__file__), "..", "docs", "example-profile.json")
+
+
+def _base_profile_dict(**overrides):
+    """A minimal valid profile dict (JSON-shaped) built from the standard keys."""
+    d = {
+        "name": "vendor",
+        "identity": {"hw": "VENDOR-X", "fw": "1.0.0", "level": 2},
+        "config": [[n, default, mn, mx] for (n, default, mn, mx) in BASE_PROFILE["config"]],
+        "int_keys": list(BASE_PROFILE["int_keys"]),
+        "warns": ["BATT"],
+    }
+    d.update(overrides)
+    return d
+
+
+def _write(tmp_path, data):
+    p = tmp_path / "profile.json"
+    p.write_text(json.dumps(data))
+    return str(p)
+
+
+def test_shipped_example_profile_loads_and_runs(tmp_path):
+    prof = load_profile_file(_EXAMPLE)
+    s = ORCPSim(profile=prof, config_file=str(tmp_path / "ex.json"))
+    assert s.identity["hw"] == "ACME-DRIVE"
+    assert s.identity["fw"] == "2.3.0"
+    assert s.battery_display == "band"
+    assert "acme.led_brightness" in s.cfg          # vendor key present
+    # standard §7 keys still present
+    assert "pid.kp" in s.cfg and "hb.timeout_ms" in s.cfg
+
+
+def test_profile_file_coerces_sets_and_tuples(tmp_path):
+    prof = load_profile_file(_write(tmp_path, _base_profile_dict()))
+    assert isinstance(prof["int_keys"], set)
+    assert isinstance(prof["warns"], set)
+    assert all(isinstance(row, tuple) and len(row) == 4 for row in prof["config"])
+
+
+def test_profile_file_defaults_optional_fields(tmp_path):
+    prof = load_profile_file(_write(tmp_path, _base_profile_dict()))
+    assert prof["battery"] == "percent"   # default
+    assert prof["aux5v"] is False         # default
+    assert prof["wheel_modes"] == []      # default
+
+
+def test_profile_file_missing_field_rejected(tmp_path):
+    bad = _base_profile_dict()
+    del bad["identity"]
+    with pytest.raises(ValueError, match="missing required field 'identity'"):
+        load_profile_file(_write(tmp_path, bad))
+
+
+def test_profile_file_identity_must_have_hw_fw_level(tmp_path):
+    bad = _base_profile_dict(identity={"hw": "X", "fw": "1.0.0"})  # no level
+    with pytest.raises(ValueError, match="identity must include 'level'"):
+        load_profile_file(_write(tmp_path, bad))
+
+
+def test_profile_file_bad_config_row_rejected(tmp_path):
+    bad = _base_profile_dict()
+    bad["config"].append(["too.short", 1.0, 0.0])   # 3 elements, not 4
+    with pytest.raises(ValueError, match="config row must be"):
+        load_profile_file(_write(tmp_path, bad))
+
+
+def test_profile_file_missing_standard_key_rejected(tmp_path):
+    bad = _base_profile_dict()
+    bad["config"] = [row for row in bad["config"] if row[0] != "pid.kp"]
+    with pytest.raises(ValueError, match="missing keys the core requires"):
+        load_profile_file(_write(tmp_path, bad))
+
+
+def test_mc1_ships_as_bundled_profile():
+    """MC1 is discovered from profiles/mc1.json, not an in-module dict."""
+    from orcp_sim import PROFILES
+    assert "mc1" in PROFILES
+    assert PROFILES["mc1"]["identity"]["hw"] == "MC1"
+    assert len(PROFILES["mc1"]["config"]) == 43
+
+
+def test_mc1_preset_slow_reports_timeout(mc1):
+    """MC1 exposes slow.timeout_ms (default 0 = disabled); PRESET SLOW reports it."""
+    assert "slow.timeout_ms" in mc1.cfg
+    resp = mc1.handle_command("PRESET SLOW")
+    assert "timeout_ms=0" in resp and "name=SLOW" in resp
+
+
+def test_preset_slow_tolerates_missing_slow_timeout_key(tmp_path):
+    """slow.timeout_ms is optional for vendor profiles (not a core-required
+    key); a profile that omits it must default to 0, not crash, on PRESET SLOW."""
+    prof = _base_profile_dict()
+    prof["config"] = [r for r in prof["config"] if r[0] != "slow.timeout_ms"]
+    s = ORCPSim(profile=load_profile_file(_write(tmp_path, prof)),
+                config_file=str(tmp_path / "x.json"))
+    assert "slow.timeout_ms" not in s.cfg
+    assert "timeout_ms=0" in s.handle_command("PRESET SLOW")
