@@ -1,7 +1,7 @@
 {
   "name": "mc1",
   "_comment": [
-    "First Layer Robotics MC1 Motion Core, tracking FW 1.13.0 / CONFIG 25 (2026-08-16).",
+    "First Layer Robotics MC1 Motion Core, tracking FW 1.13.1 / CONFIG 25 (2026-08-16).",
     "GENERATED FROM FIRMWARE SOURCE, not written by hand: the config block is",
     "App/Src/config.c's key_table (name, min, max) walked in config_key_id_t",
     "order -- which is GET ALL order -- with each default resolved through its",
@@ -10,7 +10,7 @@
     "the firmware had deleted (current.scale), reversed invert flags on both",
     "motors and both encoders, and the wrong battery field rendering."
   ],
-  "identity": { "hw": "MC1", "fw": "1.13.0", "level": 2, "info_extra": { "bl": "1.4.0" } },
+  "identity": { "hw": "MC1", "fw": "1.13.1", "level": 2, "info_extra": { "bl": "1.4.0" } },
   "config": [
     ["aux5v.shunt_ohms",          0.01,   0.001,        10],
     ["aux5v.i_max",                  6,     0.1,        20],
