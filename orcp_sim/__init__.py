@@ -754,30 +754,66 @@ class ORCPSim:
         return f"OK WHEEL l={l_val:.3f} r={r_val:.3f}"
 
     def _cmd_STOP(self, kv, bare):
-        """STOP [BRAKE|COAST] [HOLD]
+        """STOP [mode=<vendor_mode>] [hold=<0|1>]
 
-        ⚠️ HOLD is a VENDOR EXTENSION — ORCP v1.1 §4 defines STOP [BRAKE|COAST]
-        only. It is offered solely by profiles declaring `stop_hold`, and a host
-        that needs to run against any ORCP device must not depend on it.
-        Deceleration method and end state are orthogonal, hence a second bare
-        argument rather than a third mode."""
+        ⚠️ KEY=VALUE IS THE SPEC FORM. ORCP v1.1 §STOP gives the syntax as
+        ``STOP [mode=<vendor_mode>]``, matching WHEEL's ``mode=DUTY``. The bare
+        forms (``STOP COAST``, ``STOP HOLD``) are accepted for compatibility
+        with devices that shipped them, but a host should write the kv form.
+
+        ⚠️ ``hold`` is a VENDOR EXTENSION — ORCP v1.1 defines only the stop
+        modes. It is honoured solely by profiles declaring `stop_hold`, and a
+        host that must run against any ORCP device cannot depend on it.
+        Deceleration method and end state are orthogonal, hence its own
+        parameter rather than a third mode.
+
+        ⚠️ STOP NEVER FAILS. §STOP: "MUST be accepted regardless of safety state
+        — STOP never fails." So a hold that cannot be honoured does NOT produce
+        an ERR; the stop succeeds and the response says `hold=refused
+        reason=<CODE>`. Silence is not the alternative — a caller believing the
+        robot is holding on a slope when nothing is holding it is the hazard the
+        feature exists to prevent. Only genuinely malformed arguments ERR."""
+        stop_mode = "BRAKE"
+        hold = False
+
+        # key=value form (authoritative)
+        if "mode" in kv:
+            m = kv["mode"].upper()
+            if m not in ("BRAKE", "COAST"):
+                return 'ERR code=BAD_ARG msg="mode must be BRAKE or COAST"'
+            stop_mode = m
+        if "hold" in kv:
+            h = kv["hold"].upper()
+            if h in ("1", "ON", "TRUE"):
+                hold = True
+            elif h in ("0", "OFF", "FALSE"):
+                hold = False
+            else:
+                return 'ERR code=BAD_ARG msg="hold must be 0 or 1"'
+
+        # bare form (compatibility)
         bare_u = [b.upper() for b in bare]
         for b in bare_u:
             if b not in ("BRAKE", "COAST", "HOLD"):
                 return f'ERR code=BAD_ARG msg="expected BRAKE, COAST or HOLD"'
-        stop_mode = "COAST" if ("COAST" in bare_u or kv.get("mode", "").upper() == "COAST") else "BRAKE"
-        hold = "HOLD" in bare_u
+        if "COAST" in bare_u:
+            stop_mode = "COAST"
+        elif "BRAKE" in bare_u:
+            stop_mode = "BRAKE"
+        if "HOLD" in bare_u:
+            hold = True
 
-        if hold and not self.has_stop_hold:
-            return 'ERR code=BAD_ARG msg="HOLD not supported by this device"'
+        # A hold that cannot be honoured is reported, not raised — see above.
+        refused = None
         if hold:
-            # Refuse rather than accept a command that reports success and then
-            # silently does nothing — the worst outcome for something a user
-            # reaches for on a slope.
-            if not self.enabled:
-                return 'ERR code=NOT_ENABLED msg="HOLD requires ENABLE ON"'
-            if int(self.cfg["kin.counts_per_rev"]) == 0:
-                return 'ERR code=BAD_ARG msg="HOLD requires encoders (kin.counts_per_rev)"'
+            if not self.has_stop_hold:
+                refused = "UNSUPPORTED"
+            elif not self.enabled:
+                refused = "NOT_ENABLED"
+            elif int(self.cfg["kin.counts_per_rev"]) == 0:
+                refused = "NO_ENCODERS"
+            if refused:
+                hold = False
 
         self._stop_motors(stop_mode)
         if hold:
@@ -795,6 +831,8 @@ class ORCPSim:
             resp += " parking=auto"
         if hold:
             resp += " hold=on"
+        elif refused:
+            resp += f" hold=refused reason={refused}"
         return resp
 
     def _cmd_STATUS(self, kv, bare):

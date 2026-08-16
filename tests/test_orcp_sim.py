@@ -458,24 +458,61 @@ def test_hold_zero_disables_the_timeout(mc1):
     assert mc1.hold_state == 1
 
 
-def test_hold_refused_rather_than_silently_useless(mc1):
-    """Both refusals exist because the alternative is a command that reports
-    success and does nothing — the worst outcome for something reached for on a
-    slope."""
+def test_hold_refused_is_reported_not_raised(mc1):
+    """⚠️ ORCP v1.1 §STOP: "MUST be accepted regardless of safety state — STOP
+    never fails." So a hold that cannot be honoured must NOT produce an ERR.
+
+    Silence is not the alternative: the stop succeeds and the response says so
+    explicitly, because a caller believing the robot is holding on a slope when
+    nothing is holding it is the hazard the feature exists to prevent."""
     mc1.handle_command("ENABLE OFF")
-    assert mc1.handle_command("STOP HOLD").startswith("ERR code=NOT_ENABLED")
+    r = mc1.handle_command("STOP HOLD")
+    assert r.startswith("OK STOP")
+    assert "hold=refused reason=NOT_ENABLED" in r
+    assert mc1.hold_state == 0
 
     mc1.handle_command("ENABLE ON")
     mc1.handle_command("SET kin.counts_per_rev=0")
     r = mc1.handle_command("STOP HOLD")
-    assert r.startswith("ERR code=BAD_ARG") and "encoders" in r
+    assert r.startswith("OK STOP")
+    assert "hold=refused reason=NO_ENCODERS" in r
 
 
-def test_base_profile_rejects_hold(sim):
-    """HOLD is a vendor extension; the ORCP v1.1 reference surface must not
-    silently accept it."""
-    assert sim.handle_command("STOP HOLD").startswith("ERR code=BAD_ARG")
+def test_base_profile_refuses_hold_without_failing_the_stop(sim):
+    """HOLD is a vendor extension: the reference surface must neither honour it
+    silently nor break STOP by rejecting the whole command."""
+    r = sim.handle_command("STOP HOLD")
+    assert r.startswith("OK STOP")
+    assert "hold=refused reason=UNSUPPORTED" in r
     assert "hold=" not in sim.handle_command("STATUS")
+
+
+def test_stop_accepts_the_spec_kv_form(mc1):
+    """⚠️ ORCP v1.1 §STOP documents `STOP [mode=<vendor_mode>]`, matching
+    WHEEL's `mode=DUTY`. Reading only bare arguments meant a host written
+    against the published spec asked for a coast, got a brake, and was told
+    `OK STOP mode=BRAKE` — the same failure class as a stop that discards its
+    mode argument."""
+    assert mc1.handle_command("STOP mode=COAST") == "OK STOP mode=COAST parking=auto"
+    assert mc1.coasting
+
+    assert mc1.handle_command("STOP mode=BRAKE") == "OK STOP mode=BRAKE"
+    assert not mc1.coasting
+
+    r = mc1.handle_command("STOP mode=COAST hold=1")
+    assert r == "OK STOP mode=COAST parking=auto hold=on"
+    assert mc1.hold_pending
+
+    assert mc1.handle_command("STOP hold=0") == "OK STOP mode=BRAKE"
+    assert mc1.handle_command("STOP mode=SIDEWAYS").startswith("ERR code=BAD_ARG")
+    assert mc1.handle_command("STOP hold=maybe").startswith("ERR code=BAD_ARG")
+
+
+def test_stop_bare_form_still_accepted(mc1):
+    """The bare forms shipped in FW 1.12.0 and appear in the datasheet, so they
+    stay accepted — as the compatibility form, not the documented one."""
+    assert mc1.handle_command("STOP COAST") == "OK STOP mode=COAST parking=auto"
+    assert mc1.handle_command("STOP HOLD") == "OK STOP mode=BRAKE hold=on"
 
 
 def test_stop_rejects_unknown_bare_arg(mc1):

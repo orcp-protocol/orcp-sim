@@ -122,14 +122,28 @@ the simulator will otherwise break on the real board:
 a holding brake, answering `mode=COAST parking=auto`, with `coast=1` in `STATUS`
 while it rolls. A coast that simply ended would roll back down a slope.
 
-**`STOP [BRAKE|COAST] [HOLD]`** (`stop_hold`) stops and then actively holds
-position. Deceleration method and end state are orthogonal, so `HOLD` is a
-second bare argument rather than a third mode. `STATUS hold=` reports `0` not
-holding, `1` holding, `2` **ended by fault or timeout** — the `2` is the case a
-host should act on, because the robot was under active position control and now
-is not. It is cleared by the next command. `HOLD` is refused outright when the
-device is not enabled or has no encoders, rather than accepted and silently
-doing nothing.
+**`STOP [mode=<BRAKE|COAST>] [hold=<0|1>]`** (`stop_hold`) stops and then
+actively holds position. Deceleration method and end state are orthogonal, so
+`hold` is its own parameter rather than a third mode. `STATUS hold=` reports `0`
+not holding, `1` holding, `2` **ended by fault or timeout** — the `2` is the case
+a host should act on, because the robot was under active position control and
+now is not. It is cleared by the next command.
+
+⚠️ **key=value is the spec form.** ORCP v1.1 §STOP gives the syntax as
+`STOP [mode=<vendor_mode>]`, matching `WHEEL`'s `mode=DUTY`. The bare forms
+(`STOP COAST`, `STOP HOLD`) are accepted for compatibility with firmware that
+shipped them, but a host should write the documented form — firmware reading only
+bare arguments answers `OK STOP mode=BRAKE` to a coast request and brakes, and
+the echoed mode makes the response look correct.
+
+⚠️ **STOP never fails, so a refused hold is not an error.** §STOP: *"MUST be
+accepted regardless of safety state — STOP never fails."* A hold that cannot be
+honoured therefore produces a successful stop carrying
+`hold=refused reason=<CODE>` (`NOT_ENABLED`, `NO_ENCODERS`, `UNSUPPORTED`) — never
+an `ERR`. Silence is not the alternative: a caller believing the robot is holding
+on a slope when nothing is holding it is the hazard the feature exists to
+prevent, so the response says so plainly. `base` answers
+`hold=refused reason=UNSUPPORTED` for the same reason.
 
 > ⚠️ **What the simulator does NOT tell you about `HOLD`.** The physics model has
 > no gravity, load or friction, so a simulated hold is trivially satisfied and
