@@ -103,7 +103,7 @@ Select a bundled profile by name with `--profile`, or load your own file with
 | Profile | Ships as | What it emulates |
 |---------|----------|------------------|
 | `base` (default) | built into the core | Generic, fully-conformant ORCP v1.1 controller — the standard reference (15 standard §7 config keys). |
-| `mc1` | `orcp_sim/profiles/mc1.json` | First Layer Robotics MC1: the full 46-key config surface, `hw=MC1` / `bl=` in `INFO`, band-label battery, and the `! WARN AUX5V` vendor push. |
+| `mc1` | `orcp_sim/profiles/mc1.json` | First Layer Robotics MC1 at **FW 1.13.0 / CONFIG 25**: the full **63-key** config surface, `hw=MC1` / `bl=` in `INFO`, the `! WARN AUX5V` vendor push, six-decimal `GET`, self-parking `STOP COAST` and `STOP … HOLD`. |
 
 ```bash
 orcp-sim --profile mc1 --ws 8765      # emulate an MC1 over WebSocket
@@ -112,6 +112,35 @@ orcp-sim --profile mc1 --aux5v-amps 6 # trip the 5V-rail warning (! WARN AUX5V)
 
 The `base` profile is the pure standard reference and is kept free of any
 vendor-specific surface.
+
+### Vendor extensions modelled (MC1)
+
+Two behaviours beyond ORCP v1.1 are modelled, because host code written against
+the simulator will otherwise break on the real board:
+
+**`STOP COAST` self-parks** (`coast_park`). It coasts to rest and *then* applies
+a holding brake, answering `mode=COAST parking=auto`, with `coast=1` in `STATUS`
+while it rolls. A coast that simply ended would roll back down a slope.
+
+**`STOP [BRAKE|COAST] [HOLD]`** (`stop_hold`) stops and then actively holds
+position. Deceleration method and end state are orthogonal, so `HOLD` is a
+second bare argument rather than a third mode. `STATUS hold=` reports `0` not
+holding, `1` holding, `2` **ended by fault or timeout** — the `2` is the case a
+host should act on, because the robot was under active position control and now
+is not. It is cleared by the next command. `HOLD` is refused outright when the
+device is not enabled or has no encoders, rather than accepted and silently
+doing nothing.
+
+> ⚠️ **What the simulator does NOT tell you about `HOLD`.** The physics model has
+> no gravity, load or friction, so a simulated hold is trivially satisfied and
+> says nothing about whether a real robot holds on a slope. What it does model
+> is the *protocol*: the `hold=` transitions, the exit paths, the refusals and
+> the thermal timeout. Treat a passing simulator run as evidence your host logic
+> is correct, never as evidence the robot will hold.
+>
+> ⚠️ And on real hardware `STOP HOLD` is a **convenience, not a safety
+> function** — it needs power, a live MCU and working encoders, and releases on
+> any power-stage fault. The MC1 has no holding brake.
 
 ### Creating a profile (third-party vendors)
 
@@ -140,11 +169,21 @@ The fields are:
 | `name` | yes | Short profile name (the `--profile` selector and the start-up banner) |
 | `identity` | yes | `INFO` fields — must include `hw`, `fw`, `level`; optional `vendor`, `model`, and `info_extra` (e.g. `{"bl": "1.0.0"}`) |
 | `config` | yes | Ordered `[name, default, min, max]` rows — drives `GET`/`SET`/`GET ALL`. Must include the config keys the core requires (the §7 essentials); add vendor keys freely |
-| `int_keys` | no | Config keys rendered as integers (others as `%.3f`) |
+| `int_keys` | no | Config keys rendered as integers (others per `config_decimals`) |
 | `wheel_modes` | no | Vendor `WHEEL` modes beyond rad/s, e.g. `["DUTY"]` |
 | `warns` | no | `! WARN <type>` events the device emits, e.g. `["BATT"]` |
 | `battery` | no | STATUS battery field: `"percent"` (default) or `"band"` |
 | `aux5v` | no | `true` to model a 5 V aux rail + `! WARN AUX5V` |
+| `config_decimals` | no | Fractional digits in `GET` / `GET ALL` values (default `3`). The MC1 uses `6`: three could not round-trip per-board calibration constants around 0.006 |
+| `coast_park` | no | `true` if `STOP COAST` coasts to rest and then applies a parking brake, answering `mode=COAST parking=auto`. Adds `coast=` to STATUS |
+| `stop_hold` | no | `true` if the device implements `STOP … HOLD`. Adds `hold=` to STATUS |
+
+⚠️ **`config_decimals`, `coast_park` and `stop_hold` describe vendor extensions,
+not ORCP v1.1**, and all three default off. `base` therefore stays a clean
+reference implementation of the standard: a host that works against `base` is
+using nothing vendor-specific. Declaring a capability the device does not have
+is worse than declaring none, because the field then reads as data rather than
+as "unsupported" — `hold=0` and an absent `hold=` are not the same answer.
 
 A complete example is provided at
 [docs/example-profile.json](docs/example-profile.json) — copy it and edit. The

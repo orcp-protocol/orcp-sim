@@ -13,7 +13,7 @@ surface (identity, config-key set, vendor command modes, push events) layered
 over the generic v1.1 core:
 
     --profile base   generic, fully-conformant ORCP v1.1 controller  [default]
-    --profile mc1    First Layer Robotics MC1 (46-key surface, ! WARN AUX5V, ...)
+    --profile mc1    First Layer Robotics MC1 (63-key surface, ! WARN AUX5V, ...)
 
 Only `base` (the standard reference, which must not drift) is built into the
 core. Every other profile — including MC1 — is a JSON data file: bundled ones
@@ -76,6 +76,17 @@ COMMAND_LEVEL = {
 #   warns         — ! WARN <type> events this device emits
 #   battery       — STATUS battery field rendering: "percent" or "band"
 #   aux5v         — whether a 5 V aux rail (and ! WARN AUX5V) is modelled
+#   config_decimals — fractional digits in GET / GET ALL values (default 3).
+#                   Devices differ: the MC1 moved to 6 in FW 1.11.0 because 3
+#                   could not round-trip per-board calibration constants.
+#   coast_park    — STOP COAST coasts to rest and then applies a parking brake,
+#                   answering `mode=COAST parking=auto`
+#   stop_hold     — device implements the STOP … HOLD vendor extension and the
+#                   STATUS hold= field
+#
+# ⚠️ config_decimals, coast_park and stop_hold describe VENDOR EXTENSIONS, not
+# ORCP v1.1. They default off so `base` stays a clean reference implementation
+# of the standard — a host that works against `base` uses nothing vendor-specific.
 # ---------------------------------------------------------------------------
 
 BASE_PROFILE = {
@@ -105,6 +116,10 @@ BASE_PROFILE = {
     "warns": ["BATT"],
     "battery": "percent",
     "aux5v": False,
+    # Vendor extensions, all off: `base` is the ORCP v1.1 reference surface.
+    "config_decimals": 3,
+    "coast_park": False,
+    "stop_hold": False,
 }
 
 # Vendor profiles (other than `base`) ship as JSON data files in profiles/ and
@@ -166,6 +181,9 @@ def load_profile_file(path):
     data.setdefault("wheel_modes", [])
     data.setdefault("battery", "percent")
     data.setdefault("aux5v", False)
+    data.setdefault("config_decimals", 3)
+    data.setdefault("coast_park", False)
+    data.setdefault("stop_hold", False)
 
     required = set(_CORE_REQUIRED_KEYS)
     if data.get("aux5v"):
@@ -279,6 +297,9 @@ class ORCPSim:
         self.warns = set(self.profile.get("warns", []))
         self.battery_display = self.profile.get("battery", "percent")
         self.has_aux5v = self.profile.get("aux5v", False)
+        self.config_decimals = int(self.profile.get("config_decimals", 3))
+        self.has_coast_park = self.profile.get("coast_park", False)
+        self.has_stop_hold = self.profile.get("stop_hold", False)
 
         self.motor_l = MotorSim()
         self.motor_r = MotorSim()
@@ -311,6 +332,16 @@ class ORCPSim:
         self.aux5v_v = 5.0 if aux5v_volts is None else aux5v_volts
         self.aux5v_warned = False
 
+        # Coast-and-park / active position hold (vendor extensions; see the
+        # profile fields of the same name).
+        self.coasting = False
+        self.coast_still = 0
+        self.coast_start_ms = 0
+        self.hold_state = 0          # 0 off · 1 holding · 2 ended by fault/timeout
+        self.hold_pending = False    # STOP COAST HOLD: engage at the park
+        self.hold_target = (0, 0)    # encoder counts, per side
+        self.hold_start_ms = 0
+
         # Streaming + async push
         self.stream_active = False
         self.stream_rate = 10
@@ -330,7 +361,7 @@ class ORCPSim:
     def _fmt(self, key, val):
         if key in self.int_keys:
             return str(int(round(val)))
-        return f"{float(val):.3f}"
+        return f"{float(val):.{self.config_decimals}f}"
 
     def _estimate_pct(self, vbat):
         if vbat <= 2.0:
@@ -381,14 +412,113 @@ class ORCPSim:
         self.pid_l.limit = self.pid_r.limit = self.duty_limit
 
     def _stop_motors(self, stop_mode="BRAKE"):
+        # Any stop taken while a hold was live ends it, and DEFAULTS TO
+        # REPORTING it as hold=2. That way round because every fault path
+        # reaches here, so a hold broken by a fault is surfaced without each
+        # fault having to know the feature exists — and a hold that ends
+        # unnoticed is the failure the field exists to catch. The clean exits
+        # (a plain STOP, ENABLE OFF) call _clear_hold() afterwards.
+        if self.hold_state == 1 or self.hold_pending:
+            self.hold_pending = False
+            self.hold_state = 2
+
         self.mode = "IDLE"
         self.target_l = self.target_r = 0.0
         self.ramped_target_l = self.ramped_target_r = 0.0
         self.motor_l.duty = self.motor_r.duty = 0.0
         self.pid_l.reset()
         self.pid_r.reset()
-        if stop_mode != "COAST":
+        if stop_mode == "COAST":
+            if self.has_coast_park:
+                # Coast to rest and then park. On a device without this, COAST
+                # just ends — which on a slope means rolling back down.
+                self.coasting = True
+                self.coast_still = 0
+                self.coast_start_ms = self.millis()
+        else:
             self.motor_l.velocity = self.motor_r.velocity = 0.0
+            self.coasting = False
+
+    # -- coast-and-park / position hold (vendor extensions) --
+
+    def _clear_hold(self):
+        """Clean exit — new motion command, plain STOP, ENABLE OFF. Clears hold=2."""
+        self.hold_pending = False
+        self.hold_state = 0
+
+    def _engage_hold(self):
+        """Latch position and begin holding. Called at a braking STOP … HOLD, or
+        from the coast-park for STOP COAST HOLD."""
+        self.hold_target = (self.motor_l.counts, self.motor_r.counts)
+        self.hold_start_ms = self.millis()
+        self.hold_pending = False
+        self.mode = "VELOCITY"
+        self.target_l = self.target_r = 0.0
+        self.ramped_target_l = self.ramped_target_r = 0.0
+        self.pid_l.reset()
+        self.pid_r.reset()
+        self.hold_state = 1
+
+    def _service_coast(self):
+        """Watch the encoders through a coast and apply the parking brake once
+        the robot has actually stopped."""
+        park = (self.millis() - self.coast_start_ms) >= self.cfg.get("coast.max_ms", 8000)
+        cpr = int(self.cfg["kin.counts_per_rev"])
+        if cpr == 0:
+            # Rest cannot be detected, so do not coast blindly.
+            park = True
+        else:
+            vmag = max(abs(self.motor_l.filtered_vel), abs(self.motor_r.filtered_vel))
+            park_ticks = max(1, int(round(self.cfg.get("coast.park_ms", 50) / (CONTROL_DT * 1000))))
+            if vmag < self.cfg.get("coast.park_vel", 0.15):
+                self.coast_still += 1
+                if self.coast_still >= park_ticks:
+                    park = True
+            else:
+                self.coast_still = 0
+        if park:
+            self.coasting = False
+            self.motor_l.velocity = self.motor_r.velocity = 0.0
+            if self.hold_pending:
+                # Engages HERE, not at the command: latching the target when the
+                # stop was requested would aim at wherever the robot was before
+                # it coasted, so on a slope the loop would drive back up it.
+                self._engage_hold()
+
+    def _service_hold(self):
+        """Proportional position loop whose output is a VELOCITY target for the
+        existing velocity loop — so it inherits kin.max_accel, the duty limit
+        and the tuned gains, and a large error cannot produce a step.
+
+        ⚠️ The physics model has no gravity, load or friction, so a hold here is
+        trivially satisfied and says NOTHING about whether a real robot holds on
+        a slope. What it does model is the PROTOCOL: hold= transitions, the exit
+        paths, and the thermal timeout."""
+        cpr = int(self.cfg["kin.counts_per_rev"])
+        if cpr == 0:
+            self._end_hold_abnormally()
+            return
+        max_ms = self.cfg.get("hold.max_ms", 0)
+        if max_ms and (self.millis() - self.hold_start_ms) >= max_ms:
+            self._end_hold_abnormally()
+            return
+        rad_per_count = 2.0 * math.pi / cpr
+        kp = self.cfg.get("hold.kp", 2.0)
+        vmax = self.cfg.get("hold.max_vel", 0.5)
+        band = self.cfg.get("hold.deadband", 0.02)
+        for i, motor in enumerate((self.motor_l, self.motor_r)):
+            err = (self.hold_target[i] - motor.counts) * rad_per_count
+            v = 0.0 if abs(err) < band else max(-vmax, min(vmax, kp * err))
+            if i == 0:
+                self.target_l = v
+            else:
+                self.target_r = v
+
+    def _end_hold_abnormally(self):
+        """Timeout or loss of feedback: brake and latch hold=2. Never coast —
+        the whole reason the feature exists is that the robot may be on a
+        slope. _stop_motors() sets hold=2 itself, so this does not."""
+        self._stop_motors("BRAKE")
 
     # -- safety --
 
@@ -463,6 +593,11 @@ class ORCPSim:
         self.tick_count += 1
         self._check_safety()
         self._check_pushes()
+
+        if self.coasting:
+            self._service_coast()
+        if self.hold_state == 1:
+            self._service_hold()
 
         if self.latched or self.fault not in ("OK", "NOT_ENABLED"):
             self.motor_l.duty = self.motor_r.duty = 0.0
@@ -540,6 +675,10 @@ class ORCPSim:
         return f"OK PONG t={self.millis()}"
 
     def _arm_motion(self):
+        # Every motion command passes through here, so this is where a hold is
+        # superseded — including the sticky hold=2, which is what makes
+        # "cleared on the next command" true.
+        self._clear_hold()
         now = time.monotonic()
         self.last_motion_time = now
         if not self.motion_active:
@@ -615,11 +754,48 @@ class ORCPSim:
         return f"OK WHEEL l={l_val:.3f} r={r_val:.3f}"
 
     def _cmd_STOP(self, kv, bare):
+        """STOP [BRAKE|COAST] [HOLD]
+
+        ⚠️ HOLD is a VENDOR EXTENSION — ORCP v1.1 §4 defines STOP [BRAKE|COAST]
+        only. It is offered solely by profiles declaring `stop_hold`, and a host
+        that needs to run against any ORCP device must not depend on it.
+        Deceleration method and end state are orthogonal, hence a second bare
+        argument rather than a third mode."""
         bare_u = [b.upper() for b in bare]
+        for b in bare_u:
+            if b not in ("BRAKE", "COAST", "HOLD"):
+                return f'ERR code=BAD_ARG msg="expected BRAKE, COAST or HOLD"'
         stop_mode = "COAST" if ("COAST" in bare_u or kv.get("mode", "").upper() == "COAST") else "BRAKE"
+        hold = "HOLD" in bare_u
+
+        if hold and not self.has_stop_hold:
+            return 'ERR code=BAD_ARG msg="HOLD not supported by this device"'
+        if hold:
+            # Refuse rather than accept a command that reports success and then
+            # silently does nothing — the worst outcome for something a user
+            # reaches for on a slope.
+            if not self.enabled:
+                return 'ERR code=NOT_ENABLED msg="HOLD requires ENABLE ON"'
+            if int(self.cfg["kin.counts_per_rev"]) == 0:
+                return 'ERR code=BAD_ARG msg="HOLD requires encoders (kin.counts_per_rev)"'
+
         self._stop_motors(stop_mode)
+        if hold:
+            if stop_mode == "COAST":
+                self.hold_pending = True   # engages at the park
+                self.hold_state = 0
+            else:
+                self._engage_hold()
+        else:
+            self._clear_hold()
         self.motion_active = False
-        return f"OK STOP mode={stop_mode}"
+
+        resp = f"OK STOP mode={stop_mode}"
+        if stop_mode == "COAST" and self.has_coast_park:
+            resp += " parking=auto"
+        if hold:
+            resp += " hold=on"
+        return resp
 
     def _cmd_STATUS(self, kv, bare):
         return (
@@ -631,7 +807,20 @@ class ORCPSim:
             f"dl={self.motor_l.duty:.3f} dr={self.motor_r.duty:.3f} "
             f"lim={self.duty_limit:.3f} "
             f"vbat={self.vbat:.3f} battery={self._battery_field()}"
+            + self._status_extra()
         )
+
+    def _status_extra(self):
+        """Vendor STATUS fields, emitted only by profiles that declare the
+        matching capability. A field a device does not implement must be ABSENT
+        rather than zero — a host checking `hold=` needs to distinguish
+        "not holding" from "cannot hold"."""
+        out = ""
+        if self.has_coast_park:
+            out += f" coast={1 if self.coasting else 0}"
+        if self.has_stop_hold:
+            out += f" hold={self.hold_state}"
+        return out
 
     def _cmd_ENABLE(self, kv, bare):
         state = bare[0].upper() if bare else "ON"
@@ -648,6 +837,7 @@ class ORCPSim:
         elif state == "OFF":
             self.enabled = False
             self._stop_motors("BRAKE")
+            self._clear_hold()   # deliberate release, so no sticky hold=2
             self.motion_active = False
             return "OK ENABLE state=OFF"
         return 'ERR code=BAD_ARG msg="expected ON or OFF"'
