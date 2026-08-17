@@ -121,12 +121,20 @@ cannot meaningfully reset into a bootloader, and faking success would let a flas
 tool "succeed" against something that flashed nothing. **Rejecting it is the
 honest answer**, and `ERR code=BAD_CMD` is exactly right.
 
-📋 **Whatever is chosen, the fix for the surprise is cheap and separate:** make
-the mismatch discoverable rather than mysterious. A profile that declares
-`hw=MC1` while implementing a subset could say so at start-up —
-*"emulating MC1: 15 of 20 commands; CAPS, ENC, PID, SERIAL, BOOTLOADER not
-modelled"* — which turns a confusing tool failure into a stated limitation.
-That is worth doing **before** any of A–D.
+✅ **DONE 2026-08-17 — the cheap half is implemented.** A profile now declares
+its own omissions via `not_modelled`, printed at start-up:
+
+```
+  NOT modelled: commands CAPS, ENC, PID, SERIAL, BOOTLOADER (emulating 15 of 20) — these answer ERR code=BAD_CMD
+```
+
+It changes no behaviour — the commands still correctly `ERR` — but a confusing
+tool failure becomes a stated limitation. A test asserts the declaration is
+honest **in both directions**: nothing listed as unmodelled may actually be
+implemented, and no disclaimed STATUS field may actually appear. ⚠️ *A stale
+disclaimer would be worse than none, because it would be believed.*
+
+Options A–D below remain open; this only removes the surprise.
 
 ## 7. Not urgent
 

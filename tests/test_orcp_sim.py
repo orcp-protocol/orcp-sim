@@ -773,3 +773,27 @@ class TestUnknownParameterRejection:
         guard is profile-aware, not a fixed list."""
         assert mc1.handle_command("STOP hold=1").startswith("OK STOP")
         assert sim.handle_command("STOP hold=1").startswith("ERR code=BAD_ARG")
+
+
+def test_profile_declares_what_it_does_not_model(mc1, sim):
+    """⚠️ A profile that emulates a real device must say what it leaves out.
+
+    The mc1 profile implements 15 of the controller's 20 commands. Without this
+    declaration a vendor tool reaching for CAPS or SERIAL gets a bare
+    `ERR code=BAD_CMD` and looks like a broken tool, rather than a simulator
+    that was never asked to model it. Purely declarative — it changes no
+    behaviour, and the commands still (correctly) ERR."""
+    from orcp_sim import PROFILES
+    nm = PROFILES["mc1"]["not_modelled"]
+    assert "SERIAL" in nm["commands"] and "CAPS" in nm["commands"]
+    assert "il" in nm["status_fields"]
+    # The declaration must be honest in BOTH directions: nothing listed as
+    # unmodelled may actually be implemented.
+    for cmd in nm["commands"]:
+        assert not hasattr(mc1, f"_cmd_{cmd}"), f"{cmd} is listed as unmodelled but exists"
+        assert mc1.handle_command(cmd).startswith("ERR code=BAD_CMD")
+    status = mc1.handle_command("STATUS")
+    for f in nm["status_fields"]:
+        assert f"{f}=" not in status, f"{f} is listed as unmodelled but is reported"
+    # `base` models the standard in full, so it disclaims nothing.
+    assert PROFILES["base"]["not_modelled"] == {"commands": [], "status_fields": []}

@@ -191,6 +191,7 @@ The fields are:
 | `config_decimals` | no | Fractional digits in `GET` / `GET ALL` values (default `3`). The MC1 uses `6`: three could not round-trip per-board calibration constants around 0.006 |
 | `coast_park` | no | `true` if `STOP COAST` coasts to rest and then applies a parking brake, answering `mode=COAST parking=auto`. Adds `coast=` to STATUS |
 | `stop_hold` | no | `true` if the device implements `STOP … HOLD`. Adds `hold=` to STATUS |
+| `not_modelled` | no | `{"commands": [...], "status_fields": [...]}` — parts of the **real** device this profile does not reproduce. Purely declarative; announced at start-up so an unmodelled command reads as a stated limitation rather than a broken tool |
 
 ⚠️ **`config_decimals`, `coast_park` and `stop_hold` describe vendor extensions,
 not ORCP v1.1**, and all three default off. `base` therefore stays a clean
@@ -248,9 +249,19 @@ commands; `CAPS`, `ENC`, `PID`, `SERIAL` and `BOOTLOADER` answer
 `ERR code=BAD_CMD`, and about a dozen vendor `STATUS` fields (`il`, `ir`,
 `casc`, `eff_lim`, `aux5v_*`, …) are absent. A host that uses only standard ORCP
 plus the declared extensions is fully exercised; a vendor tool that reaches for
-one of those commands will not run against the simulator. See
-[docs/vendor-surface-gap.md](docs/vendor-surface-gap.md) for the measurement and
-the options.
+one of those commands will not run against the simulator.
+
+A profile declares its own omissions via `not_modelled`, and they are printed at
+start-up:
+
+```
+ORCP Reference Simulator — proto ORCP/1.1, profile mc1 (hw=MC1), Level 2
+  NOT modelled: commands CAPS, ENC, PID, SERIAL, BOOTLOADER (emulating 15 of 20) — these answer ERR code=BAD_CMD
+  NOT modelled: STATUS fields il, ir, isense, casc, eff_lim, …
+```
+
+See [docs/vendor-surface-gap.md](docs/vendor-surface-gap.md) for the measurement
+and the options for closing the gap properly.
 
 ## Connecting from a browser (web configurator)
 

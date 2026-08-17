@@ -106,6 +106,13 @@ COMMAND_KV_KEYS = {
 #                   answering `mode=COAST parking=auto`
 #   stop_hold     — device implements the STOP … HOLD vendor extension and the
 #                   STATUS hold= field
+#   not_modelled  — {"commands": [...], "status_fields": [...]} — parts of the
+#                   REAL device this profile does NOT reproduce. Purely
+#                   declarative: it changes no behaviour, and is announced at
+#                   start-up so an unmodelled command is a stated limitation
+#                   rather than a mystery ERR. A profile cannot express a vendor
+#                   command surface (see docs/vendor-surface-gap.md); until it
+#                   can, the least a profile can do is admit what it leaves out.
 #
 # ⚠️ config_decimals, coast_park and stop_hold describe VENDOR EXTENSIONS, not
 # ORCP v1.1. They default off so `base` stays a clean reference implementation
@@ -143,6 +150,8 @@ BASE_PROFILE = {
     "config_decimals": 3,
     "coast_park": False,
     "stop_hold": False,
+    # `base` models the standard in full, so there is nothing to disclaim.
+    "not_modelled": {"commands": [], "status_fields": []},
 }
 
 # Vendor profiles (other than `base`) ship as JSON data files in profiles/ and
@@ -207,6 +216,9 @@ def load_profile_file(path):
     data.setdefault("config_decimals", 3)
     data.setdefault("coast_park", False)
     data.setdefault("stop_hold", False)
+    nm = data.setdefault("not_modelled", {})
+    nm.setdefault("commands", [])
+    nm.setdefault("status_fields", [])
 
     required = set(_CORE_REQUIRED_KEYS)
     if data.get("aux5v"):
@@ -1072,6 +1084,17 @@ class ORCPSim:
 def _banner(sim, extra):
     print(f"ORCP Reference Simulator — proto ORCP/{PROTO_VERSION}, "
           f"profile {sim.profile['name']} (hw={sim.identity['hw']}), Level {sim.level}")
+    # ⚠️ Announce what this profile does NOT reproduce. A vendor tool reaching
+    # for an unmodelled command otherwise gets a bare `ERR code=BAD_CMD` and
+    # looks like a broken tool rather than a simulator that was never asked to
+    # model it. Costs one line and removes an entire class of confusion.
+    nm = sim.profile.get("not_modelled", {})
+    if nm.get("commands"):
+        n_have = len([a for a in dir(sim) if a.startswith("_cmd_")])
+        print(f"  NOT modelled: commands {', '.join(nm['commands'])} "
+              f"(emulating {n_have} of {n_have + len(nm['commands'])}) — these answer ERR code=BAD_CMD")
+    if nm.get("status_fields"):
+        print(f"  NOT modelled: STATUS fields {', '.join(nm['status_fields'])}")
     print(extra)
     print(f"Preset: {sim.preset} | Battery: {sim.vbat:.1f}V | Config: {sim.config_file or '(none)'}")
 
