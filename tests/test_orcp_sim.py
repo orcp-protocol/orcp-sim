@@ -478,13 +478,44 @@ def test_hold_refused_is_reported_not_raised(mc1):
     assert "hold=refused reason=NO_ENCODERS" in r
 
 
-def test_base_profile_refuses_hold_without_failing_the_stop(sim):
-    """HOLD is a vendor extension: the reference surface must neither honour it
-    silently nor break STOP by rejecting the whole command."""
-    r = sim.handle_command("STOP HOLD")
-    assert r.startswith("OK STOP")
-    assert "hold=refused reason=UNSUPPORTED" in r
+def test_base_profile_rejects_hold_as_an_unknown_parameter(sim):
+    """⚠️ ORCP v1.1 §4 preamble: "Conformant implementations MUST reject unknown
+    bracketed parameters they do not recognise, rather than silently ignoring
+    them, so a host writing against the spec cannot accidentally invoke
+    vendor-specific behaviour on a different controller."
+
+    This does NOT collide with §STOP's "STOP never fails", whose qualifier is
+    *regardless of safety state* — an unrecognised parameter is not a safety
+    state.
+
+    ⚠️ An earlier version answered `OK STOP … hold=refused reason=UNSUPPORTED`.
+    That satisfied the intent but not the letter, and it blurred two different
+    answers: "I have this feature and cannot honour it now" versus "I have never
+    heard of it". A host needs to tell those apart — the first is worth
+    retrying, the second never will be."""
+    for cmd in ("STOP HOLD", "STOP hold=1"):
+        r = sim.handle_command(cmd)
+        assert r.startswith("ERR code=BAD_ARG"), cmd
+        assert "unknown parameter" in r
+    # …and a plain STOP is completely unaffected.
+    assert sim.handle_command("STOP") == "OK STOP mode=BRAKE"
     assert "hold=" not in sim.handle_command("STATUS")
+
+
+def test_unknown_stop_parameter_rejected_even_where_hold_is_supported(mc1):
+    """The rule is about unrecognised keys, not about `hold` specifically."""
+    r = mc1.handle_command("STOP mode=BRAKE wibble=3")
+    assert r.startswith("ERR code=BAD_ARG") and "wibble" in r
+
+
+def test_supported_hold_still_reports_a_runtime_refusal(mc1):
+    """⚠️ The distinction being drawn: on a device that HAS the feature, a hold
+    it cannot honour right now is still a successful STOP carrying
+    hold=refused — not an error. Only the unknown-parameter case errors."""
+    mc1.handle_command("ENABLE OFF")
+    r = mc1.handle_command("STOP hold=1")
+    assert r.startswith("OK STOP")
+    assert "hold=refused reason=NOT_ENABLED" in r
 
 
 def test_stop_accepts_the_spec_kv_form(mc1):

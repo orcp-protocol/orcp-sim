@@ -767,14 +767,36 @@ class ORCPSim:
         Deceleration method and end state are orthogonal, hence its own
         parameter rather than a third mode.
 
-        ⚠️ STOP NEVER FAILS. §STOP: "MUST be accepted regardless of safety state
-        — STOP never fails." So a hold that cannot be honoured does NOT produce
-        an ERR; the stop succeeds and the response says `hold=refused
-        reason=<CODE>`. Silence is not the alternative — a caller believing the
-        robot is holding on a slope when nothing is holding it is the hazard the
-        feature exists to prevent. Only genuinely malformed arguments ERR."""
+        ⚠️ STOP NEVER FAILS **for safety reasons**. §STOP: "MUST be accepted
+        regardless of safety state." So a hold this device HAS but cannot honour
+        right now does NOT produce an ERR; the stop succeeds and the response
+        says `hold=refused reason=<CODE>`. Silence is not the alternative — a
+        caller believing the robot is holding on a slope when nothing is holding
+        it is the hazard the feature exists to prevent.
+
+        ⚠️ That is NOT the same as an unknown parameter. `hold=` on a device
+        without `stop_hold` is rejected outright per the §4 preamble, because
+        the qualifier on "never fails" is *regardless of safety state* — an
+        unrecognised parameter is not a safety state. "I cannot do it now" and
+        "I have never heard of it" are different answers and a host needs to
+        tell them apart."""
         stop_mode = "BRAKE"
         hold = False
+
+        # ⚠️ §4 preamble: "Conformant implementations MUST reject unknown
+        # bracketed parameters they do not recognise, rather than silently
+        # ignoring them, so a host writing against the spec cannot accidentally
+        # invoke vendor-specific behaviour on a different controller."
+        #
+        # So `hold` is an unknown parameter — and therefore an ERROR — on a
+        # profile that does not declare `stop_hold`. It is only a runtime
+        # refusal on one that does. The distinction matters: `hold=refused`
+        # says "I have this feature and cannot honour it right now", which is
+        # a different claim from "I have never heard of it".
+        known = {"mode"} | ({"hold"} if self.has_stop_hold else set())
+        for k in kv:
+            if k not in known:
+                return f'ERR code=BAD_ARG msg="unknown parameter: {k}"'
 
         # key=value form (authoritative)
         if "mode" in kv:
@@ -791,11 +813,14 @@ class ORCPSim:
             else:
                 return 'ERR code=BAD_ARG msg="hold must be 0 or 1"'
 
-        # bare form (compatibility)
+        # bare form (compatibility). ⚠️ The same rejection rule applies here:
+        # a bare HOLD is just as unrecognised on a device without the feature as
+        # hold=1 is, and accepting it would silently engage nothing.
         bare_u = [b.upper() for b in bare]
+        allowed_bare = ("BRAKE", "COAST") + (("HOLD",) if self.has_stop_hold else ())
         for b in bare_u:
-            if b not in ("BRAKE", "COAST", "HOLD"):
-                return f'ERR code=BAD_ARG msg="expected BRAKE, COAST or HOLD"'
+            if b not in allowed_bare:
+                return f'ERR code=BAD_ARG msg="unknown parameter: {b}"'
         if "COAST" in bare_u:
             stop_mode = "COAST"
         elif "BRAKE" in bare_u:
@@ -806,9 +831,7 @@ class ORCPSim:
         # A hold that cannot be honoured is reported, not raised — see above.
         refused = None
         if hold:
-            if not self.has_stop_hold:
-                refused = "UNSUPPORTED"
-            elif not self.enabled:
+            if not self.enabled:
                 refused = "NOT_ENABLED"
             elif int(self.cfg["kin.counts_per_rev"]) == 0:
                 refused = "NO_ENCODERS"
