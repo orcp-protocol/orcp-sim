@@ -242,6 +242,16 @@ genuinely new behaviour (custom telemetry physics, bespoke commands, new warn
 *trigger logic*); those live in the simulator core. A pip entry-point plugin
 mechanism for profiles that need custom code is a planned future direction.
 
+⚠️ **A vendor profile therefore models the PROTOCOL surface, not the whole
+command set.** The bundled `mc1` profile implements 15 of the controller's 20
+commands; `CAPS`, `ENC`, `PID`, `SERIAL` and `BOOTLOADER` answer
+`ERR code=BAD_CMD`, and about a dozen vendor `STATUS` fields (`il`, `ir`,
+`casc`, `eff_lim`, `aux5v_*`, …) are absent. A host that uses only standard ORCP
+plus the declared extensions is fully exercised; a vendor tool that reaches for
+one of those commands will not run against the simulator. See
+[docs/vendor-surface-gap.md](docs/vendor-surface-gap.md) for the measurement and
+the options.
+
 ## Connecting from a browser (web configurator)
 
 Browsers reach real boards over the Web Serial API (USB CDC) and **cannot open a
