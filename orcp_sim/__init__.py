@@ -65,6 +65,29 @@ COMMAND_LEVEL = {
     "GET": 2, "SET": 2, "SAVE": 2, "LOAD": 2, "DEFAULTS": 2,
 }
 
+# Recognised key=value parameters per command.
+#
+# ⚠️ ORCP v1.1 §4 preamble: "Conformant implementations MUST reject unknown
+# bracketed parameters they do not recognise, rather than silently ignoring
+# them, so a host writing against the spec cannot accidentally invoke
+# vendor-specific behaviour on a different controller."
+#
+# This simulator is what someone runs to check their host is conformant, so
+# ignoring an unknown parameter here is worse than ignoring one in a product:
+# it actively CERTIFIES a host that is asking for behaviour no controller
+# implements. Commands absent from this table take no key=value parameters at
+# all. SET is special-cased — its key is a configuration parameter name — and
+# STOP's `hold` is profile-dependent.
+COMMAND_KV_KEYS = {
+    "CMD_VEL": {"v", "w"},
+    "WHEEL":   {"l", "r", "mode"},
+    "STOP":    {"mode"},                # + "hold" when the profile declares it
+}
+# ⚠️ STREAM is deliberately ABSENT: §STREAM's syntax is `STREAM <ON|OFF> [rate]`
+# — the rate is a BARE argument. This simulator used to accept `rate=` as well,
+# which is a non-standard form, and a reference implementation that accepts it
+# certifies a host the spec does not. Bare `STREAM ON 10` is unaffected.
+
 # ---------------------------------------------------------------------------
 # Implementation profiles
 #
@@ -664,6 +687,17 @@ class ORCPSim:
         if handler is None or COMMAND_LEVEL.get(token, 1) > self.level:
             return f'ERR code=BAD_CMD msg="unknown command: {token}"'
 
+        # Reject unrecognised key=value parameters (see COMMAND_KV_KEYS).
+        # SET is exempt here: its parameter name IS a config key, so _cmd_SET
+        # validates it against the profile and answers BAD_KEY itself.
+        if token != "SET":
+            allowed = set(COMMAND_KV_KEYS.get(token, ()))
+            if token == "STOP" and self.has_stop_hold:
+                allowed.add("hold")
+            for k in kv:
+                if k not in allowed:
+                    return f'ERR code=BAD_ARG msg="unknown parameter: {k}"'
+
         try:
             return handler(kv, bare)
         except Exception as e:           # pragma: no cover - defensive
@@ -783,20 +817,11 @@ class ORCPSim:
         stop_mode = "BRAKE"
         hold = False
 
-        # ⚠️ §4 preamble: "Conformant implementations MUST reject unknown
-        # bracketed parameters they do not recognise, rather than silently
-        # ignoring them, so a host writing against the spec cannot accidentally
-        # invoke vendor-specific behaviour on a different controller."
-        #
-        # So `hold` is an unknown parameter — and therefore an ERROR — on a
-        # profile that does not declare `stop_hold`. It is only a runtime
-        # refusal on one that does. The distinction matters: `hold=refused`
-        # says "I have this feature and cannot honour it right now", which is
-        # a different claim from "I have never heard of it".
-        known = {"mode"} | ({"hold"} if self.has_stop_hold else set())
-        for k in kv:
-            if k not in known:
-                return f'ERR code=BAD_ARG msg="unknown parameter: {k}"'
+        # Unrecognised key=value parameters — including `hold` on a profile
+        # without the feature — are rejected centrally in handle_command().
+        # ⚠️ That rejection is a DIFFERENT answer from `hold=refused`, which
+        # means "I have this feature and cannot honour it right now". A host
+        # needs to tell them apart: the first never comes true, the second may.
 
         # key=value form (authoritative)
         if "mode" in kv:
@@ -978,8 +1003,23 @@ class ORCPSim:
         return f"OK GET {key}={self._fmt(key, self.cfg[key])}"
 
     def _cmd_SET(self, kv, bare):
+        """SET <parameter>=<value> — exactly one parameter.
+
+        ⚠️ Exempt from the central unknown-parameter check because SET's key IS
+        a configuration parameter name, so the check happens here against the
+        profile's key set. But "exempt from the central check" must not mean
+        "unchecked": taking the first pair and ignoring the rest let
+        ``SET pid.kp=0.1 scope=all`` succeed while silently dropping `scope` —
+        the same footgun §4 exists to close, in the one command that opted out
+        of the general guard.
+        """
         if not kv:
             return 'ERR code=BAD_ARG msg="SET needs parameter=value"'
+        if len(kv) > 1:
+            extra = [k for k in list(kv)[1:]]
+            return f'ERR code=BAD_ARG msg="SET takes one parameter; also got: {", ".join(extra)}"'
+        if bare:
+            return f'ERR code=BAD_ARG msg="unexpected argument: {bare[0]}"'
         key, raw = next(iter(kv.items()))
         if key not in self.cfg:
             return f'ERR code=BAD_ARG msg="unknown parameter: {key}"'

@@ -699,3 +699,77 @@ def test_preset_slow_tolerates_missing_slow_timeout_key(tmp_path):
                 config_file=str(tmp_path / "x.json"))
     assert "slow.timeout_ms" not in s.cfg
     assert "timeout_ms=0" in s.handle_command("PRESET SLOW")
+
+
+# ---------------------------------------------------------------------------
+# §4: unknown parameters must be REJECTED, not ignored
+# ---------------------------------------------------------------------------
+
+class TestUnknownParameterRejection:
+    """⚠️ ORCP v1.1 §4 preamble: "Conformant implementations MUST reject unknown
+    bracketed parameters they do not recognise, rather than silently ignoring
+    them, so a host writing against the spec cannot accidentally invoke
+    vendor-specific behaviour on a different controller."
+
+    ⚠️ **This matters more in the simulator than in a product.** `--profile base`
+    is what someone runs to check their host is conformant. A simulator that
+    ignores an unknown parameter does not merely tolerate a bad host — it
+    CERTIFIES one, telling the author their code is fine when it is asking for
+    behaviour no controller implements. Every command below answered OK before
+    this was fixed.
+    """
+
+    @pytest.mark.parametrize("cmd,bad", [
+        ("WHEEL l=1 r=1 torque=5", "torque"),
+        ("CMD_VEL v=0.1 w=0 accel=9", "accel"),
+        ("STREAM ON 10 fmt=json", "fmt"),
+        ("PRESET SLOW turbo=1", "turbo"),
+        ("ENABLE ON force=1", "force"),
+        ("STATUS verbose=1", "verbose"),
+    ])
+    def test_unknown_parameter_is_rejected(self, sim, cmd, bad):
+        r = sim.handle_command(cmd)
+        assert r.startswith("ERR code=BAD_ARG"), cmd
+        assert bad in r
+
+    @pytest.mark.parametrize("cmd", [
+        "WHEEL l=1 r=1", "WHEEL l=1 r=1 mode=DUTY", "CMD_VEL v=0.1 w=0",
+        "STREAM ON 10", "PRESET SLOW", "ENABLE ON",
+        "STOP", "STOP mode=COAST", "STATUS", "GET pid.kp", "GET ALL",
+    ])
+    def test_legitimate_forms_still_accepted(self, sim, cmd):
+        """The guard must not become stricter than the spec — every standard
+        and documented-vendor form still has to work."""
+        assert not sim.handle_command(cmd).startswith("ERR"), cmd
+
+    def test_set_takes_exactly_one_parameter(self, sim):
+        """⚠️ SET is exempt from the CENTRAL check because its key is a config
+        parameter name — but exempt must not mean unchecked. It took the first
+        pair and dropped the rest, so `SET pid.kp=0.1 scope=all` succeeded while
+        silently ignoring `scope`: the same footgun, in the one command that
+        opted out of the general guard."""
+        assert sim.handle_command("SET pid.kp=0.1") == "OK SET pid.kp=0.100"
+        r = sim.handle_command("SET pid.kp=0.1 scope=all")
+        assert r.startswith("ERR code=BAD_ARG") and "scope" in r
+        r = sim.handle_command("SET pid.kp=0.1 ALL")
+        assert r.startswith("ERR code=BAD_ARG") and "ALL" in r
+        # An unknown config key is still its own, distinct rejection.
+        assert "nonsuch" in sim.handle_command("SET nonsuch=1")
+
+    def test_stream_rate_is_a_bare_argument_not_a_parameter(self, sim):
+        """⚠️ §STREAM's syntax is `STREAM <ON|OFF> [rate]` — the rate is BARE.
+
+        The simulator used to accept `rate=` as well. That is a non-standard
+        form, and a reference implementation accepting it certifies a host the
+        spec does not. Found while sweeping §4 across the command surface, by
+        checking the firmware (which only ever accepted the bare form) against
+        the simulator and asking which one was right."""
+        assert sim.handle_command("STREAM ON 10").startswith("OK STREAM")
+        r = sim.handle_command("STREAM ON rate=10")
+        assert r.startswith("ERR code=BAD_ARG") and "rate" in r
+
+    def test_vendor_key_allowed_only_where_the_profile_declares_it(self, mc1, sim):
+        """`hold` is a real parameter on MC1 and an unknown one on base — the
+        guard is profile-aware, not a fixed list."""
+        assert mc1.handle_command("STOP hold=1").startswith("OK STOP")
+        assert sim.handle_command("STOP hold=1").startswith("ERR code=BAD_ARG")
