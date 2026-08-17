@@ -267,7 +267,7 @@ def test_mc1_identity(mc1):
     r = mc1.handle_command("INFO")
     assert "hw=MC1" in r
     assert "bl=1.4.0" in r
-    assert "fw=1.13.1" in r
+    assert "fw=1.13.2" in r
     assert "level=2" in r
     assert "vendor=" not in r          # MC1 INFO carries no vendor/model fields
 
