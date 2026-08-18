@@ -129,12 +129,12 @@ not holding, `1` holding, `2` **ended by fault or timeout** — the `2` is the c
 a host should act on, because the robot was under active position control and
 now is not. It is cleared by the next command.
 
-⚠️ **key=value is the spec form.** ORCP v1.1 §STOP gives the syntax as
+⚠️ **key=value is the only accepted form.** ORCP v1.1 §STOP gives the syntax as
 `STOP [mode=<vendor_mode>]`, matching `WHEEL`'s `mode=DUTY`. The bare forms
-(`STOP COAST`, `STOP HOLD`) are accepted for compatibility with firmware that
-shipped them, but a host should write the documented form — firmware reading only
-bare arguments answers `OK STOP mode=BRAKE` to a coast request and brakes, and
-the echoed mode makes the response look correct.
+(`STOP COAST`, `STOP HOLD`) were accepted for one release and now return
+`ERR code=BAD_ARG` naming the replacement — carrying two syntaxes for one
+command, one of them undocumented by the standard, cost more than the
+compatibility was worth while no external host depended on it.
 
 ⚠️ **STOP never fails, so a refused hold is not an error.** §STOP: *"MUST be
 accepted regardless of safety state — STOP never fails."* A hold that cannot be

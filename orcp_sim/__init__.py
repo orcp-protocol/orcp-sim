@@ -802,10 +802,12 @@ class ORCPSim:
     def _cmd_STOP(self, kv, bare):
         """STOP [mode=<vendor_mode>] [hold=<0|1>]
 
-        ⚠️ KEY=VALUE IS THE SPEC FORM. ORCP v1.1 §STOP gives the syntax as
+        ⚠️ KEY=VALUE IS THE ONLY FORM. ORCP v1.1 §STOP gives the syntax as
         ``STOP [mode=<vendor_mode>]``, matching WHEEL's ``mode=DUTY``. The bare
-        forms (``STOP COAST``, ``STOP HOLD``) are accepted for compatibility
-        with devices that shipped them, but a host should write the kv form.
+        forms (``STOP COAST``, ``STOP HOLD``) were accepted for one release and
+        are now rejected — carrying two syntaxes for one command, one of them
+        undocumented by the standard, cost more than the compatibility was
+        worth while no external host depended on it.
 
         ⚠️ ``hold`` is a VENDOR EXTENSION — ORCP v1.1 defines only the stop
         modes. It is honoured solely by profiles declaring `stop_hold`, and a
@@ -850,20 +852,10 @@ class ORCPSim:
             else:
                 return 'ERR code=BAD_ARG msg="hold must be 0 or 1"'
 
-        # bare form (compatibility). ⚠️ The same rejection rule applies here:
-        # a bare HOLD is just as unrecognised on a device without the feature as
-        # hold=1 is, and accepting it would silently engage nothing.
-        bare_u = [b.upper() for b in bare]
-        allowed_bare = ("BRAKE", "COAST") + (("HOLD",) if self.has_stop_hold else ())
-        for b in bare_u:
-            if b not in allowed_bare:
-                return f'ERR code=BAD_ARG msg="unknown parameter: {b}"'
-        if "COAST" in bare_u:
-            stop_mode = "COAST"
-        elif "BRAKE" in bare_u:
-            stop_mode = "BRAKE"
-        if "HOLD" in bare_u:
-            hold = True
+        # ⚠️ No bare arguments. The message names the replacement rather than
+        # just refusing: `STOP COAST` used to work and is still in circulation.
+        if bare:
+            return 'ERR code=BAD_ARG msg="use STOP [mode=BRAKE|COAST] [hold=0|1]"'
 
         # A hold that cannot be honoured is reported, not raised — see above.
         refused = None

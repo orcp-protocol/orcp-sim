@@ -267,7 +267,7 @@ def test_mc1_identity(mc1):
     r = mc1.handle_command("INFO")
     assert "hw=MC1" in r
     assert "bl=1.4.0" in r
-    assert "fw=1.13.2" in r
+    assert "fw=1.13.3" in r
     assert "level=2" in r
     assert "vendor=" not in r          # MC1 INFO carries no vendor/model fields
 
@@ -362,7 +362,7 @@ def test_stop_coast_parks_itself(mc1):
         mc1.control_tick()
     assert mc1.motor_l.filtered_vel > 1.0
 
-    assert mc1.handle_command("STOP COAST") == "OK STOP mode=COAST parking=auto"
+    assert mc1.handle_command("STOP mode=COAST") == "OK STOP mode=COAST parking=auto"
     assert mc1.coasting
     assert "coast=1" in mc1.handle_command("STATUS")
 
@@ -379,12 +379,12 @@ def test_stop_coast_parks_itself(mc1):
 
 
 def test_base_stop_coast_does_not_park(sim):
-    assert sim.handle_command("STOP COAST") == "OK STOP mode=COAST"
+    assert sim.handle_command("STOP mode=COAST") == "OK STOP mode=COAST"
     assert "coast=" not in sim.handle_command("STATUS")
 
 
 def test_stop_hold_engages_and_reports(mc1):
-    assert mc1.handle_command("STOP HOLD") == "OK STOP mode=BRAKE hold=on"
+    assert mc1.handle_command("STOP hold=1") == "OK STOP mode=BRAKE hold=on"
     mc1.control_tick()
     assert mc1.hold_state == 1
     assert "hold=1" in mc1.handle_command("STATUS")
@@ -399,7 +399,7 @@ def test_stop_coast_hold_latches_target_at_rest_not_at_command(mc1):
         mc1.control_tick()
     at_command = mc1.motor_l.counts
 
-    assert mc1.handle_command("STOP COAST HOLD") == "OK STOP mode=COAST parking=auto hold=on"
+    assert mc1.handle_command("STOP mode=COAST hold=1") == "OK STOP mode=COAST parking=auto hold=on"
     assert mc1.hold_pending and mc1.hold_state == 0   # not yet holding
 
     for _ in range(1000):
@@ -415,7 +415,7 @@ def test_hold_exits_cleanly_without_reporting(mc1):
     hold goes to 0, not to the fault/timeout value 2."""
     for exit_cmd in ("STOP", "ENABLE OFF", "WHEEL l=1 r=1"):
         mc1.handle_command("ENABLE ON")
-        mc1.handle_command("STOP HOLD")
+        mc1.handle_command("STOP hold=1")
         mc1.control_tick()
         assert mc1.hold_state == 1, exit_cmd
         mc1.handle_command(exit_cmd)
@@ -425,7 +425,7 @@ def test_hold_exits_cleanly_without_reporting(mc1):
 def test_hold_broken_by_fault_reports_two(mc1):
     """A hold broken by a fault must be distinguishable from a normal stop — that
     is the moment a host should alert an operator."""
-    mc1.handle_command("STOP HOLD")
+    mc1.handle_command("STOP hold=1")
     mc1.control_tick()
     mc1._raise_fault("ENCODER_STALL")
     assert mc1.hold_state == 2
@@ -440,7 +440,7 @@ def test_hold_times_out_and_brakes(mc1):
     """hold.max_ms is a THERMAL limit: holding on a gradient is a stalled motor,
     no back-EMF and no self-cooling. On expiry it brakes and reports."""
     mc1.handle_command("SET hold.max_ms=50")
-    mc1.handle_command("STOP HOLD")
+    mc1.handle_command("STOP hold=1")
     mc1.control_tick()
     assert mc1.hold_state == 1
     time.sleep(0.08)
@@ -451,7 +451,7 @@ def test_hold_times_out_and_brakes(mc1):
 
 def test_hold_zero_disables_the_timeout(mc1):
     mc1.handle_command("SET hold.max_ms=0")
-    mc1.handle_command("STOP HOLD")
+    mc1.handle_command("STOP hold=1")
     time.sleep(0.05)
     for _ in range(20):
         mc1.control_tick()
@@ -466,14 +466,14 @@ def test_hold_refused_is_reported_not_raised(mc1):
     explicitly, because a caller believing the robot is holding on a slope when
     nothing is holding it is the hazard the feature exists to prevent."""
     mc1.handle_command("ENABLE OFF")
-    r = mc1.handle_command("STOP HOLD")
+    r = mc1.handle_command("STOP hold=1")
     assert r.startswith("OK STOP")
     assert "hold=refused reason=NOT_ENABLED" in r
     assert mc1.hold_state == 0
 
     mc1.handle_command("ENABLE ON")
     mc1.handle_command("SET kin.counts_per_rev=0")
-    r = mc1.handle_command("STOP HOLD")
+    r = mc1.handle_command("STOP hold=1")
     assert r.startswith("OK STOP")
     assert "hold=refused reason=NO_ENCODERS" in r
 
@@ -493,10 +493,9 @@ def test_base_profile_rejects_hold_as_an_unknown_parameter(sim):
     answers: "I have this feature and cannot honour it now" versus "I have never
     heard of it". A host needs to tell those apart — the first is worth
     retrying, the second never will be."""
-    for cmd in ("STOP HOLD", "STOP hold=1"):
-        r = sim.handle_command(cmd)
-        assert r.startswith("ERR code=BAD_ARG"), cmd
-        assert "unknown parameter" in r
+    r = sim.handle_command("STOP hold=1")
+    assert r.startswith("ERR code=BAD_ARG")
+    assert "unknown parameter" in r
     # …and a plain STOP is completely unaffected.
     assert sim.handle_command("STOP") == "OK STOP mode=BRAKE"
     assert "hold=" not in sim.handle_command("STATUS")
@@ -539,11 +538,22 @@ def test_stop_accepts_the_spec_kv_form(mc1):
     assert mc1.handle_command("STOP hold=maybe").startswith("ERR code=BAD_ARG")
 
 
-def test_stop_bare_form_still_accepted(mc1):
-    """The bare forms shipped in FW 1.12.0 and appear in the datasheet, so they
-    stay accepted — as the compatibility form, not the documented one."""
-    assert mc1.handle_command("STOP COAST") == "OK STOP mode=COAST parking=auto"
-    assert mc1.handle_command("STOP HOLD") == "OK STOP mode=BRAKE hold=on"
+def test_stop_bare_form_rejected_with_a_useful_message(mc1, sim):
+    """⚠️ `STOP COAST` used to work. It was accepted for one release for
+    compatibility with devices that shipped it — then removed, because no
+    external host depended on it and two syntaxes for one command (one of them
+    undocumented by ORCP) cost more than the compatibility was worth.
+
+    The refusal must NAME the replacement: the old form is in a published
+    datasheet, so someone will type it and needs telling what to type instead,
+    not merely that they are wrong."""
+    for s in (mc1, sim):
+        for cmd in ("STOP COAST", "STOP BRAKE", "STOP HOLD"):
+            r = s.handle_command(cmd)
+            assert r.startswith("ERR code=BAD_ARG"), cmd
+            assert "mode=BRAKE|COAST" in r, cmd
+    # A bare STOP — the standard form — is untouched.
+    assert mc1.handle_command("STOP") == "OK STOP mode=BRAKE"
 
 
 def test_stop_rejects_unknown_bare_arg(mc1):
