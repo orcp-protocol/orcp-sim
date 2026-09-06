@@ -93,7 +93,7 @@
   "_not_modelled_comment": "Parts of the real MC1 this profile does not reproduce. Declarative only -- announced at start-up so an unmodelled command reads as a stated limitation rather than a broken tool. BOOTLOADER is deliberately absent and should stay so: a simulator cannot reset into a bootloader, and faking success would let a flash tool report success against something that flashed nothing. See docs/vendor-surface-gap.md.",
   "not_modelled": {
     "commands": ["CAPS", "ENC", "PID", "SERIAL", "BOOTLOADER"],
-    "status_fields": ["il", "ir", "isense", "casc", "eff_lim", "mcu_temp",
+    "status_fields": ["il", "ir", "isense", "casc", "reflex", "eff_lim", "mcu_temp",
                       "aux5v_v", "aux5v_i", "aux5v_warn",
                       "encstall_l", "encstall_r", "mfault_l", "mfault_r"]
   }
