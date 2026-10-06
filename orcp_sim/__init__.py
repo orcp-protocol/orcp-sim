@@ -257,6 +257,40 @@ PROFILES = _discover_profiles()
 MC1_PROFILE = PROFILES.get("mc1")
 
 # ---------------------------------------------------------------------------
+# Differential-drive helpers
+# ---------------------------------------------------------------------------
+
+def _scale_to_ceiling(left, right, ceiling):
+    """Bring a wheel-target PAIR within ±ceiling, preserving left:right.
+
+    Clamping each wheel independently against a shared ceiling changes the
+    ratio between them — and for a differential drive that ratio IS the turn
+    radius. A commanded arc whose outer wheel exceeds the ceiling then comes
+    out wider than asked; once BOTH wheels exceed it they pin to the same
+    value and the robot drives dead straight, silently discarding the
+    commanded angular velocity. Nothing saturates at low speed, so the fault
+    only appears as speed rises.
+
+    Scaling both by one common factor gives up speed and keeps the commanded
+    path, which is the right trade: the caller asked for a shape, and speed
+    is the part that is physically unavailable.
+
+    ⚠️ A ceiling that overstates what the drivetrain can actually deliver
+    reintroduces the same symptom downstream — the targets become correct but
+    unreachable, both wheels saturate their duty limit and the ACTUAL ratio
+    collapses toward 1.0. Scaling here cannot detect that; only an honest
+    ceiling prevents it.
+
+    Matches MC1 firmware 1.15.0 `control_set_velocity()`.
+    """
+    peak = max(abs(left), abs(right))
+    if peak > ceiling:
+        k = ceiling / peak
+        return left * k, right * k
+    return left, right
+
+
+# ---------------------------------------------------------------------------
 # PID controller
 # ---------------------------------------------------------------------------
 
@@ -644,9 +678,22 @@ class ORCPSim:
         elif self.mode == "VELOCITY":
             accel = self.cfg["kin.max_accel"]
             if accel > 0:
+                # Ramp the two wheels as a PAIR, not independently: the wheel
+                # with less distance to cover would otherwise arrive first,
+                # changing left:right mid-ramp — and left:right IS the turn
+                # radius. Independently ramped, a robot curls on the way into
+                # an arc and again on the way out of it, worse the faster it
+                # is going. See _scale_to_ceiling() for the companion case.
                 d = accel * CONTROL_DT
-                self.ramped_target_l += max(-d, min(d, self.target_l - self.ramped_target_l))
-                self.ramped_target_r += max(-d, min(d, self.target_r - self.ramped_target_r))
+                dl = self.target_l - self.ramped_target_l
+                dr = self.target_r - self.ramped_target_r
+                peak = max(abs(dl), abs(dr))
+                if peak > d:
+                    k = d / peak
+                    dl *= k
+                    dr *= k
+                self.ramped_target_l += dl
+                self.ramped_target_r += dr
             else:
                 self.ramped_target_l, self.ramped_target_r = self.target_l, self.target_r
             duty_l = self.pid_l.update(self.ramped_target_l, self.motor_l.filtered_vel, CONTROL_DT)
@@ -751,9 +798,7 @@ class ORCPSim:
         tw = self.cfg["kin.track_width"]; wr = self.cfg["kin.wheel_radius"]
         wl = (v - w * tw / 2.0) / wr
         wrr = (v + w * tw / 2.0) / wr
-        max_vel = self.duty_limit * MAX_MOTOR_RADS
-        wl = max(-max_vel, min(max_vel, wl))
-        wrr = max(-max_vel, min(max_vel, wrr))
+        wl, wrr = _scale_to_ceiling(wl, wrr, self.duty_limit * MAX_MOTOR_RADS)
 
         self._arm_motion()
         if self.mode != "VELOCITY":
@@ -788,9 +833,8 @@ class ORCPSim:
             self.mode = "OPEN_LOOP"
             self.target_l, self.target_r = l_val, r_val
         else:
-            max_vel = self.duty_limit * MAX_MOTOR_RADS
-            l_val = max(-max_vel, min(max_vel, l_val))
-            r_val = max(-max_vel, min(max_vel, r_val))
+            l_val, r_val = _scale_to_ceiling(
+                l_val, r_val, self.duty_limit * MAX_MOTOR_RADS)
             if self.mode != "VELOCITY":
                 self.pid_l.reset(); self.pid_r.reset()
                 self.ramped_target_l = self.motor_l.filtered_vel

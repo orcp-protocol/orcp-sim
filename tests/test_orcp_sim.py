@@ -267,7 +267,7 @@ def test_mc1_identity(mc1):
     r = mc1.handle_command("INFO")
     assert "hw=MC1" in r
     assert "bl=1.4.0" in r
-    assert "fw=1.13.3" in r
+    assert "fw=1.14.3" in r
     assert "level=2" in r
     assert "vendor=" not in r          # MC1 INFO carries no vendor/model fields
 
@@ -807,3 +807,143 @@ def test_profile_declares_what_it_does_not_model(mc1, sim):
         assert f"{f}=" not in status, f"{f} is listed as unmodelled but is reported"
     # `base` models the standard in full, so it disclaims nothing.
     assert PROFILES["base"]["not_modelled"] == {"commands": [], "status_fields": []}
+
+
+# ---------------------------------------------------------------------------
+# Differential-drive geometry — arc scaling and paired ramping
+#
+# Regression tests for the defect fixed in MC1 firmware 1.15.0 and mirrored
+# here: commanded arcs straightened out as speed rose, and the robot twisted
+# as it stopped. Both came from treating the two wheels as independent when
+# they are not — their RATIO is the turn radius.
+# ---------------------------------------------------------------------------
+
+def _wheels(resp):
+    """Pull the two wheel targets out of an OK CMD_VEL / OK WHEEL response."""
+    kv = dict(re.findall(r"(\w+)=(-?[\d.]+)", resp))
+    if "wl" in kv:
+        return float(kv["wl"]), float(kv["wr"])
+    return float(kv["l"]), float(kv["r"])
+
+
+def _radius(l, r, track=0.175):
+    """Turn radius implied by a wheel pair.
+
+    wheel_radius cancels — R = (l + r)·track / (2·(r − l)) — so this is also
+    invariant to a common scale error on both wheels, which is exactly the
+    property that makes it a fair test of geometry alone.
+    """
+    return float("inf") if abs(r - l) < 1e-9 else (l + r) * track / (2 * (r - l))
+
+
+def _expected_wheels(sim, v, w):
+    """Unicycle → wheel targets using the simulator's OWN kinematics.
+
+    ⚠️ Don't hard-code these: the base profile is not the MC1 profile (it uses
+    wheel_radius 0.049, not 0.050), so literal expectations silently encode the
+    wrong robot.
+    """
+    tw = sim.cfg["kin.track_width"]
+    wr = sim.cfg["kin.wheel_radius"]
+    return (v - w * tw / 2.0) / wr, (v + w * tw / 2.0) / wr
+
+
+def test_arc_ratio_held_when_over_the_ceiling(sim):
+    """⭐ The whole defect in one assertion.
+
+    SLOW caps at 0.30 duty, so the ceiling is 0.30 × 20.9 = 6.27 rad/s. This
+    arc asks for wheel targets of 4.69 / 7.31 — the outer wheel is over the
+    ceiling. Clamping each wheel independently gave 4.69 / 6.27, a ratio of
+    1.34 against the 1.56 commanded, which on a floor is a visibly wider arc.
+    """
+    sim.handle_command("PRESET SLOW")
+    sim.handle_command("ENABLE ON")
+    l, r = _wheels(sim.handle_command("CMD_VEL v=0.30 w=0.750"))
+    assert r == pytest.approx(6.27, abs=0.01), "outer wheel should sit at the ceiling"
+    assert r / l == pytest.approx(1.56, abs=0.01), "commanded ratio must survive"
+    assert _radius(l, r) == pytest.approx(0.40, abs=0.01)
+
+
+def test_arc_does_not_straighten_when_both_wheels_are_over(sim):
+    """⚠️ The worst case: independent clamping pinned BOTH wheels to the same
+    value, so the robot drove dead straight while still echoing w=1.000."""
+    sim.handle_command("PRESET SLOW")
+    sim.handle_command("ENABLE ON")
+    l, r = _wheels(sim.handle_command("CMD_VEL v=1.00 w=1.000"))
+    assert l != pytest.approx(r), "both wheels pinned to the ceiling = straight line"
+    assert r / l == pytest.approx(1.1918, abs=0.001)
+
+
+def test_arc_shape_is_speed_invariant(sim):
+    """The property customers actually notice: the same commanded radius must
+    come out the same shape at every speed, whether or not scaling engages."""
+    sim.handle_command("PRESET SLOW")
+    sim.handle_command("ENABLE ON")
+    radii = []
+    for v in (0.05, 0.10, 0.15, 0.20, 0.25, 0.30):
+        radii.append(_radius(*_wheels(
+            sim.handle_command(f"CMD_VEL v={v:.2f} w={v / 0.40:.4f}"))))
+    assert max(radii) - min(radii) < 0.005, f"radius drifts with speed: {radii}"
+
+
+def test_under_the_ceiling_is_untouched(sim):
+    """Scaling must not alter a pair that already fits."""
+    sim.handle_command("PRESET SLOW")
+    sim.handle_command("ENABLE ON")
+    exp_l, exp_r = _expected_wheels(sim, 0.20, 0.500)
+    assert max(abs(exp_l), abs(exp_r)) < sim.duty_limit * 20.9, \
+        "test precondition: this pair must already fit under the ceiling"
+    l, r = _wheels(sim.handle_command("CMD_VEL v=0.20 w=0.500"))
+    assert l == pytest.approx(exp_l, abs=0.001)
+    assert r == pytest.approx(exp_r, abs=0.001)
+
+
+def test_wheel_vel_mode_scales_as_a_pair_too(sim):
+    """WHEEL mode=VEL shares the ceiling, so it shared the defect. Host-side
+    kinematics must not be a way to reach the broken path."""
+    sim.handle_command("PRESET SLOW")
+    sim.handle_command("ENABLE ON")
+    l, r = _wheels(sim.handle_command("WHEEL l=4.688 r=7.312"))
+    assert r / l == pytest.approx(1.56, abs=0.01)
+
+
+def test_spin_in_place_stays_symmetric(sim):
+    sim.handle_command("PRESET SLOW")
+    sim.handle_command("ENABLE ON")
+    l, r = _wheels(sim.handle_command("CMD_VEL v=0.00 w=2.000"))
+    assert l == pytest.approx(-r, abs=1e-6)
+
+
+def test_ramp_holds_the_ratio_and_lands_together(sim):
+    """⚠️ The twist-on-release half. Ramping each wheel independently let the
+    inner wheel reach its target — and later zero — before the outer one, so
+    the robot curled into and out of every arc, worse the faster it was going.
+    """
+    sim.handle_command("PRESET SLOW")
+    sim.handle_command("ENABLE ON")
+    sim.handle_command("CMD_VEL v=0.30 w=0.750")
+    target_ratio = sim.target_r / sim.target_l
+
+    seen = []
+    for _ in range(400):
+        sim.control_tick()
+        if abs(sim.ramped_target_l) > 0.2:
+            seen.append(sim.ramped_target_r / sim.ramped_target_l)
+        if sim.ramped_target_r == pytest.approx(sim.target_r, abs=1e-6):
+            break
+    assert seen, "ramp never moved"
+    assert max(abs(x - target_ratio) for x in seen) < 0.01, \
+        "ratio drifted during the ramp"
+
+    # ...and on the way back down, both must reach zero on the same tick.
+    sim.handle_command("CMD_VEL v=0.00 w=0.000")
+    zero_l = zero_r = None
+    for i in range(400):
+        sim.control_tick()
+        if zero_l is None and sim.ramped_target_l == 0.0:
+            zero_l = i
+        if zero_r is None and sim.ramped_target_r == 0.0:
+            zero_r = i
+        if zero_l is not None and zero_r is not None:
+            break
+    assert zero_l == zero_r, f"wheels stopped {abs(zero_r - zero_l)} ticks apart"

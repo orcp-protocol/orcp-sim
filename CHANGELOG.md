@@ -4,6 +4,61 @@
 
 ## Unreleased
 
+### ⚠️ Arcs straightened out as speed rose, and the robot curled as it stopped
+
+Both halves of the defect fixed in **MC1 firmware 1.15.0**, mirrored here. The
+simulator had them independently — it is a reference implementation, and it was
+reproducing the bug rather than the standard.
+
+**Wheel-target pairs are now scaled, not clamped individually.** `CMD_VEL` and
+`WHEEL mode=VEL` both limit targets to `duty_limit × MAX_MOTOR_RADS`. Clamping
+each wheel against that ceiling separately changes `left:right` — and for a
+differential drive that ratio **is** the turn radius. An arc whose outer wheel
+exceeded the ceiling came out wider than asked; once **both** exceeded it they
+pinned to the same value and the robot drove **dead straight while still
+echoing the commanded `w`**:
+
+```
+before   CMD_VEL v=1.00 w=1.000  ->  wl=6.270 wr=6.270   identical. straight.
+after    CMD_VEL v=1.00 w=1.000  ->  wl=5.261 wr=6.270   radius 1.000 m
+before   CMD_VEL v=0.30 w=0.750  ->  wl=4.783 wr=6.270   radius 0.650 m
+after    CMD_VEL v=0.30 w=0.750  ->  wl=4.019 wr=6.270   radius 0.400 m
+```
+
+Scaling gives up speed and keeps the commanded path, which is the correct trade:
+the caller asked for a shape, and speed is the part physically unavailable.
+Nothing saturates at low speed, which is why this only ever showed above a
+threshold — and why it survived so long.
+
+**The acceleration ramp now advances both wheels as a pair.** `kin.max_accel`
+was applied to each wheel independently, so the wheel with less distance to
+cover arrived first and the ratio drifted throughout every acceleration and
+deceleration. On release the inner wheel reached zero while the outer was still
+turning, so the robot curled at both ends of every arc, worse the faster it was
+going. Both wheels now travel the straight line to their targets and land on the
+same tick.
+
+📋 The simulator did **not** share the firmware's third defect: its
+`kin.max_accel = 0` handling was already correct.
+
+⚠️ **Note for anyone matching a real controller:** correct targets are not
+sufficient. If `motor.max_rads` overstates what the drivetrain delivers, the
+ceiling is unreachable, both wheels saturate their duty limit and the *actual*
+ratio collapses toward 1.0 — the same symptom, downstream of this fix. On the
+MC1 reference chassis the shipped default overstated it ~2×, and a commanded
+0.400 m radius was driven as 5.423 m until it was measured and corrected.
+
+Eight regression tests added, including a speed-invariance check (the same
+commanded radius must come out the same shape at every speed) and a paired-ramp
+check (ratio held throughout, both wheels reaching zero on the same tick).
+
+### Fixed: `test_mc1_identity` asserted a stale profile version
+
+Asserted `fw=1.13.3` after the profile below was re-synced to **1.14.3**, so the
+suite has been one test red since that change. 📋 The real MC1 is now on
+**1.15.0** — the profile is due another re-sync, which is a separate change.
+
+
 ### `mc1` profile re-synced to firmware 1.14.3
 
 Was declaring **1.13.3**. Three changes, no key-surface change — the profile
