@@ -800,6 +800,16 @@ class ORCPSim:
         wrr = (v + w * tw / 2.0) / wr
         wl, wrr = _scale_to_ceiling(wl, wrr, self.duty_limit * MAX_MOTOR_RADS)
 
+        # ⚠️ Report what was ACCEPTED, not what was asked for. ORCP v1.1
+        # §CMD_VEL defines v/w as "echo of the accepted target after any
+        # clamping the controller applied". Scaling the pair above may have
+        # reduced the speed to make the commanded path achievable, so convert
+        # the final targets back through the inverse kinematics rather than
+        # echoing the request. The turn radius survives the round-trip; the
+        # linear speed is what drops.
+        v = (wl + wrr) / 2.0 * wr
+        w = ((wrr - wl) * wr / tw) if tw > 1e-9 else 0.0
+
         self._arm_motion()
         if self.mode != "VELOCITY":
             self.pid_l.reset(); self.pid_r.reset()

@@ -4,6 +4,27 @@
 
 ## Unreleased
 
+### `CMD_VEL` now echoes the accepted target, not the request
+
+ORCP v1.1 §CMD_VEL defines `v`/`w` as *"echo of the accepted target after any
+clamping the controller applied"*. With pair scaling in place (below), the
+request and the acceptance diverge — and that difference is precisely what tells
+a host the drivetrain could not do what it was asked:
+
+```
+SLOW preset, ceiling 6.27 rad/s
+  asked  v=1.000 w=1.000           radius 1.000 m
+  before OK CMD_VEL v=1.000 w=1.000   ← claimed a speed it never delivered
+  after  OK CMD_VEL v=0.283 w=0.283   ← radius still 1.000 m, speed honest
+```
+
+⭐ **The commanded shape survives the round-trip; the speed is what drops.**
+That is the whole point of scaling the pair rather than clamping each wheel, and
+now the response says so. Mirrors MC1 firmware **1.16.0**.
+
+📋 `WHEEL mode=VEL` already echoed its post-scaling values, so it needed no
+change beyond the scaling itself.
+
 ### ⚠️ Arcs straightened out as speed rose, and the robot curled as it stopped
 
 Both halves of the defect fixed in **MC1 firmware 1.15.0**, mirrored here. The

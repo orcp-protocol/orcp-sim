@@ -947,3 +947,47 @@ def test_ramp_holds_the_ratio_and_lands_together(sim):
         if zero_l is not None and zero_r is not None:
             break
     assert zero_l == zero_r, f"wheels stopped {abs(zero_r - zero_l)} ticks apart"
+
+
+def test_cmd_vel_echoes_the_accepted_target_not_the_request(sim):
+    """ORCP v1.1 §CMD_VEL: v/w are the "accepted target after any clamping".
+
+    ⚠️ When scaling engages, the request and the acceptance differ — and that
+    difference is precisely what a host needs in order to know the drivetrain
+    could not do what it was asked. Echoing the request hides it.
+    """
+    sim.handle_command("PRESET SLOW")
+    sim.handle_command("ENABLE ON")
+    r = sim.handle_command("CMD_VEL v=1.00 w=1.000")
+    kv = dict(re.findall(r"(\w+)=(-?[\d.]+)", r))
+    v, w = float(kv["v"]), float(kv["w"])
+    wl, wrr = float(kv["wl"]), float(kv["wr"])
+
+    assert v < 1.00, "v must report the reduced, achievable speed"
+    # The echoed v/w must be exactly what the echoed wheel targets mean.
+    tw = sim.cfg["kin.track_width"]
+    rad = sim.cfg["kin.wheel_radius"]
+    assert v == pytest.approx((wl + wrr) / 2 * rad, abs=1e-3)
+    assert w == pytest.approx((wrr - wl) * rad / tw, abs=1e-3)
+    # ⭐ The commanded SHAPE survives even though the speed does not.
+    assert v / w == pytest.approx(1.00 / 1.000, abs=0.01)
+
+
+def test_cmd_vel_echo_unchanged_when_nothing_is_clamped(sim):
+    """A request that already fits must echo back identically."""
+    sim.handle_command("PRESET SLOW")
+    sim.handle_command("ENABLE ON")
+    r = sim.handle_command("CMD_VEL v=0.20 w=0.500")
+    kv = dict(re.findall(r"(\w+)=(-?[\d.]+)", r))
+    assert float(kv["v"]) == pytest.approx(0.20, abs=1e-3)
+    assert float(kv["w"]) == pytest.approx(0.500, abs=1e-3)
+
+
+def test_wheel_vel_echoes_the_accepted_value(sim):
+    """§WHEEL carries the same wording for l/r."""
+    sim.handle_command("PRESET SLOW")
+    sim.handle_command("ENABLE ON")
+    r = sim.handle_command("WHEEL l=4.688 r=7.312")
+    kv = dict(re.findall(r"(\w+)=(-?[\d.]+)", r))
+    assert float(kv["r"]) == pytest.approx(6.27, abs=0.01), "accepted, not requested"
+    assert float(kv["r"]) / float(kv["l"]) == pytest.approx(1.56, abs=0.01)
