@@ -846,7 +846,16 @@ class ORCPSim:
             self.ramped_target_r = self.motor_r.filtered_vel
         self.mode = "VELOCITY"
         self.target_l, self.target_r = wl, wrr
-        return f"OK CMD_VEL v={v:.3f} w={w:.3f} wl={wl:.3f} wr={wrr:.3f}"
+        # ⚠️ tl/tr, NOT wl/wr. ORCP v1.1 §CMD_VEL names these fields tl and tr
+        # ("Target left wheel velocity ... what the left-side PID will be asked
+        # to track"), and MC1 emits tl/tr. The simulator answered wl/wr from the
+        # start, so a host written against the spec — or against real hardware —
+        # found no wheel targets in the reply at all. Nothing consumed them,
+        # which is why it went unnoticed: orcp-python treats CMD_VEL as
+        # acknowledge-only. A reference implementation getting a field name
+        # wrong is still worse than most bugs, because it certifies hosts that
+        # the standard would reject.
+        return f"OK CMD_VEL v={v:.3f} w={w:.3f} tl={wl:.3f} tr={wrr:.3f}"
 
     def _cmd_WHEEL(self, kv, bare):
         ok, reason = self._can_move()

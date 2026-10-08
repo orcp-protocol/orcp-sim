@@ -4,6 +4,38 @@
 
 ## Unreleased
 
+### ⚠️ `CMD_VEL` answered `wl`/`wr`; the spec and MC1 both say `tl`/`tr`
+
+The simulator had reported the wheel targets under the wrong field names since
+its first commit:
+
+```
+before   OK CMD_VEL v=0.050 w=0.100  wl=0.422 wr=0.602
+after    OK CMD_VEL v=0.050 w=0.100  tl=0.422 tr=0.602
+```
+
+ORCP v1.1 §CMD_VEL names them `tl` and `tr` — "target left wheel velocity ...
+what the left-side PID will be asked to track" — and that is what MC1 emits. A
+host written against the spec, or developed against real hardware, found **no
+wheel-target fields at all** in the simulator's reply.
+
+Nothing broke, which is precisely why it survived this long: `orcp-python`
+treats `CMD_VEL` as acknowledge-only and never parses the targets, so no test
+and no example ever looked. ⭐ But a wrong field name in a *reference
+implementation* is worse than most bugs, because it does not fail — it quietly
+certifies hosts that the standard would reject, and the error only surfaces
+when someone moves from the simulator to a real board.
+
+`wl`/`wr` are not arbitrary: they are the correct spelling in `ENC`, where they
+carry wheel *counts*. The simulator does not implement `ENC`, so there was no
+collision to disambiguate the two and the mistake had nothing to trip over.
+`tests/test_orcp_sim.py` now pins the reply's field names to the spec.
+
+> Note on earlier entries below: where they write `CMD_VEL ... -> wl=… wr=…`,
+> the arrow means "produces these left/right wheel targets". That notation is
+> left as written; the wire format is `tl`/`tr`.
+
+
 ### ⚠️ `motor.max_rads` was a dead config key — the scaling ceiling ignored it
 
 ⚠️⚠️ **The key was settable, stored and reported, and had no effect on

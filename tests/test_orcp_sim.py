@@ -836,8 +836,8 @@ def _ceiling(sim):
 def _wheels(resp):
     """Pull the two wheel targets out of an OK CMD_VEL / OK WHEEL response."""
     kv = dict(re.findall(r"(\w+)=(-?[\d.]+)", resp))
-    if "wl" in kv:
-        return float(kv["wl"]), float(kv["wr"])
+    if "tl" in kv:                      # CMD_VEL — ORCP v1.1 names these tl/tr
+        return float(kv["tl"]), float(kv["tr"])
     return float(kv["l"]), float(kv["r"])
 
 
@@ -980,7 +980,7 @@ def test_cmd_vel_echoes_the_accepted_target_not_the_request(sim):
     r = sim.handle_command("CMD_VEL v=1.00 w=1.000")
     kv = dict(re.findall(r"(\w+)=(-?[\d.]+)", r))
     v, w = float(kv["v"]), float(kv["w"])
-    wl, wrr = float(kv["wl"]), float(kv["wr"])
+    wl, wrr = float(kv["tl"]), float(kv["tr"])
 
     assert v < 1.00, "v must report the reduced, achievable speed"
     # The echoed v/w must be exactly what the echoed wheel targets mean.
@@ -1014,3 +1014,22 @@ def test_wheel_vel_echoes_the_accepted_value(sim):
     assert float(kv["r"]) == pytest.approx(_ceiling(sim), abs=0.01), \
         "accepted, not requested"
     assert float(kv["r"]) / float(kv["l"]) == pytest.approx(1.56, abs=0.01)
+
+
+def test_cmd_vel_response_field_names_match_the_spec(sim):
+    """⚠️ ORCP v1.1 §CMD_VEL names the wheel-target fields `tl` and `tr`.
+
+    The simulator answered `wl`/`wr` from the start, so a host written against
+    the spec — or against real MC1 hardware — found no wheel targets in the
+    reply at all. Nothing consumed them (orcp-python treats CMD_VEL as
+    acknowledge-only), which is exactly why it survived: a reference
+    implementation certifying a non-conformant field name is worse than a bug
+    that breaks something loudly.
+    """
+    sim.handle_command("PRESET SLOW")
+    sim.handle_command("ENABLE ON")
+    r = sim.handle_command("CMD_VEL v=0.05 w=0.100")
+    assert r.startswith("OK CMD_VEL ")
+    for f in ("v=", "w=", "tl=", "tr="):
+        assert f in r, f"spec field {f!r} missing from {r!r}"
+    assert "wl=" not in r and "wr=" not in r, "wl/wr is not the spec spelling"
