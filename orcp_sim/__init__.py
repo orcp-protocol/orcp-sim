@@ -48,7 +48,21 @@ import tempfile
 PROTO_VERSION = "1.1"           # → proto=ORCP/1.1
 SIM_UUID      = "00SIMULATED00FF"
 
-MAX_MOTOR_RADS   = 20.9         # rad/s at full duty (physical model)
+# ⚠️ PHYSICAL MODEL ONLY — what the simulated drivetrain can actually DELIVER
+# at full duty. This is NOT the scaling ceiling: that comes from the
+# motor.max_rads config key, exactly as it does in MC1 firmware.
+#
+# 11.5 rad/s is what the MC1 reference drivetrain measures — ~11.2 loaded on
+# the floor, ~11.65 free-running (2026-10-07). It was 20.9 until then, which
+# was a motor no-load NAMEPLATE figure (200 RPM) and nearly 2x what the real
+# thing manages.
+#
+# ⭐ Why it matters that this is lower than a careless motor.max_rads: if the
+# ceiling is set above what the model can reach, both wheels saturate their
+# duty limit, the actual left:right ratio collapses toward 1.0 and commanded
+# arcs come out STRAIGHT. Keeping the model honest is what lets the simulator
+# reproduce that failure instead of hiding it.
+MAX_MOTOR_RADS   = 11.5
 MAX_LIN_VEL      = 1.0          # m/s   default CMD_VEL clamp (if no kin.max_v)
 MAX_ANG_VEL      = 3.0          # rad/s default CMD_VEL clamp (if no kin.max_w)
 VEL_FILTER_ALPHA = 0.2
@@ -767,6 +781,21 @@ class ORCPSim:
     def _cmd_PING(self, kv, bare):
         return f"OK PONG t={self.millis()}"
 
+    def _vel_ceiling(self):
+        """Velocity ceiling that over-range target PAIRS are scaled against.
+
+        ⚠️ Comes from the motor.max_rads CONFIG KEY, not from MAX_MOTOR_RADS.
+        MC1 firmware computes `cfg.motor_max_rads * duty_limit`, and the key is
+        settable at runtime precisely so each chassis can be calibrated — a
+        simulator that ignored it would make the key look inert and could never
+        reproduce the straight-arc failure that an overstated ceiling causes.
+
+        📋 Falls back to the physical model for profiles that do not define the
+        key (it is an MC1 vendor extension, not part of base ORCP), which gives
+        no artificial ceiling below capability.
+        """
+        return self.duty_limit * self.cfg.get("motor.max_rads", MAX_MOTOR_RADS)
+
     def _arm_motion(self):
         # Every motion command passes through here, so this is where a hold is
         # superseded — including the sticky hold=2, which is what makes
@@ -798,7 +827,7 @@ class ORCPSim:
         tw = self.cfg["kin.track_width"]; wr = self.cfg["kin.wheel_radius"]
         wl = (v - w * tw / 2.0) / wr
         wrr = (v + w * tw / 2.0) / wr
-        wl, wrr = _scale_to_ceiling(wl, wrr, self.duty_limit * MAX_MOTOR_RADS)
+        wl, wrr = _scale_to_ceiling(wl, wrr, self._vel_ceiling())
 
         # ⚠️ Report what was ACCEPTED, not what was asked for. ORCP v1.1
         # §CMD_VEL defines v/w as "echo of the accepted target after any
@@ -844,7 +873,7 @@ class ORCPSim:
             self.target_l, self.target_r = l_val, r_val
         else:
             l_val, r_val = _scale_to_ceiling(
-                l_val, r_val, self.duty_limit * MAX_MOTOR_RADS)
+                l_val, r_val, self._vel_ceiling())
             if self.mode != "VELOCITY":
                 self.pid_l.reset(); self.pid_r.reset()
                 self.ramped_target_l = self.motor_l.filtered_vel

@@ -4,6 +4,67 @@
 
 ## Unreleased
 
+### ⚠️ `motor.max_rads` was a dead config key — the scaling ceiling ignored it
+
+⚠️⚠️ **The key was settable, stored and reported, and had no effect on
+behaviour.** Both scaling sites computed the ceiling from the module constant
+`MAX_MOTOR_RADS` instead of from the configuration:
+
+```
+before   _scale_to_ceiling(..., self.duty_limit * MAX_MOTOR_RADS)
+after    _scale_to_ceiling(..., self._vel_ceiling())   # duty_limit x cfg[motor.max_rads]
+```
+
+⭐ MC1 firmware computes `cfg.motor_max_rads × duty_limit`, and the key is
+runtime-settable precisely so each chassis can be calibrated. ⚠️ **A simulator
+that ignored it made the key look inert and could never reproduce the
+straight-arc failure an overstated ceiling causes** — which is the single most
+expensive bug this platform has had.
+
+📋 Profiles that do not define the key (it is an MC1 vendor extension, not base
+ORCP) fall back to the physical model, i.e. no artificial ceiling below
+capability.
+
+### `MAX_MOTOR_RADS` 20.9 → 11.5, and it now means only one thing
+
+⭐ It is **the simulated drivetrain's physical capability** — what the model can
+actually deliver at full duty — and no longer doubles as the scaling ceiling.
+
+⚠️ 20.9 was a motor no-load **nameplate** figure (200 RPM). The MC1 reference
+drivetrain measures **~11.2 rad/s loaded** and ~11.65 free-running (2026-10-07),
+so the model was nearly 2× optimistic.
+
+⭐⭐ **With an honest model, the simulator reproduces the hardware — including
+the failure:**
+
+```
+capability 11.5 rad/s, SLOW duty limit 0.30 -> 3.45 rad/s achievable
+
+motor.max_rads = 8.0   ceiling 2.40  REACHABLE     wl=1.538 wr=2.400
+motor.max_rads = 20.9  ceiling 6.27  UNREACHABLE   wl=4.019 wr=6.270
+```
+
+⭐ Those 20.9 figures are **identical to what MC1 produced on the bench**. A
+student who sets 20.9 now sees the same saturation the real robot showed.
+
+### mc1 profile synced to firmware 1.17.0
+
+`motor.max_rads` default 20.9 → **8.0**, and `identity.fw` 1.14.3 → **1.17.0**.
+
+📋 A full 63-key comparison against the firmware found **only that one**
+divergence — the profile already carried `pid.kp` 0.5, `pid.ki` 7.0,
+`kin.wheel_radius` 0.050 and `kin.max_accel` 5.0, i.e. the values MC1's own
+documentation had wrong until 2026-10-07. ⭐ The profile was built from the
+firmware, not from the docs.
+
+### Tests derive the ceiling instead of hard-coding it
+
+⚠️ Five tests hard-coded `6.27` (= 0.30 × 20.9) and broke the moment the
+physical model changed — **the same trap as hard-coding wheel targets from
+another profile's `wheel_radius`**, which caught this suite out a day earlier.
+They now ask the simulator via a `_ceiling()` helper, and the protocol tests
+scale their commands to fit so they stay protocol tests.
+
 ### `CMD_VEL` now echoes the accepted target, not the request
 
 ORCP v1.1 §CMD_VEL defines `v`/`w` as *"echo of the accepted target after any

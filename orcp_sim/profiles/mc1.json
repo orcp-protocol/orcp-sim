@@ -10,91 +10,435 @@
     "the firmware had deleted (current.scale), reversed invert flags on both",
     "motors and both encoders, and the wrong battery field rendering."
   ],
-  "identity": { "hw": "MC1", "fw": "1.14.3", "level": 2, "info_extra": { "bl": "1.4.0" } },
+  "identity": {
+    "hw": "MC1",
+    "fw": "1.17.0",
+    "level": 2,
+    "info_extra": {
+      "bl": "1.4.0"
+    }
+  },
   "config": [
-    ["aux5v.shunt_ohms",          0.01,   0.001,        10],
-    ["aux5v.i_max",                  6,     0.1,        20],
-    ["aux5v.i_warn",               4.8,       0,        20],
-    ["aux5v.v_warn",               4.7,       0,         6],
-    ["batt.divider_ratio",         5.7,       1,        20],
-    ["batt.full_v",               12.6,       5,        30],
-    ["batt.low_v",                 9.9,       5,        30],
-    ["batt.critical_v",              9,       5,        30],
-    ["batt.hyst_v",                0.2,       0,         2],
-    ["current.scale_left",       3.333,     0.1,        20],
-    ["current.scale_right",      3.333,     0.1,        20],
-    ["reflex.enable",                0,       0,         1],
-    ["coast.park_vel",            0.15,       0,         5],
-    ["coast.park_ms",               50,      10,      1000],
-    ["coast.max_ms",              8000,     500,     30000],
-    ["hold.kp",                      2,       0,        20],
-    ["hold.max_vel",               0.5,       0,         5],
-    ["hold.deadband",             0.02,       0,         1],
-    ["hold.max_ms",              30000,       0,    600000],
-    ["current.offset_left",          0,      -5,         5],
-    ["current.offset_right",         0,      -5,         5],
-    ["current_loop.enable",          0,       0,         1],
-    ["encoder.filter_alpha",       0.2,    0.01,         1],
-    ["encoder.invert_left",          1,       0,         1],
-    ["encoder.invert_right",         0,       0,         1],
-    ["hb.timeout_ms",              500,      10,     60000],
-    ["kin.track_width",          0.175,    0.05,         1],
-    ["kin.wheel_radius",         0.050,    0.01,       0.5],
-    ["kin.counts_per_rev",        2249,       0,     10000],
-    ["kin.max_v",                    1,    0.05,         5],
-    ["kin.max_w",                    3,     0.1,        20],
-    ["kin.max_accel",                5,       0,       100],
-    ["motor.invert_left",            1,       0,         1],
-    ["motor.invert_right",           0,       0,         1],
-    ["motor.v_max",                 12,       0,        30],
-    ["motor.i_max",                  4,       0,        20],
-    ["motor.i_fault",                5,       0,        20],
-    ["motor.i_max_time_ms",        500,     100,     30000],
-    ["motor.max_duty_accel",         5,       0,       100],
-    ["motor.max_rads",            20.9,     0.1,       100],
-    ["motor.stall_duty",           0.2,       0,         1],
-    ["motor.stall_vel",            0.5,       0,        50],
-    ["motor.stall_ms",             500,       0,     10000],
-    ["encoder.obs_enable",           0,       0,         1],
-    ["encoder.obs_alpha",          0.4,       0,         1],
-    ["encoder.obs_beta",          0.08,       0,         1],
-    ["ff.static",                 0.03,       0,         5],
-    ["ff.visc",                  0.004,       0,         2],
-    ["ff.inertia",               0.052,       0,         2],
-    ["pid.kp_c",                   0.1,       0,        20],
-    ["pid.ki_c",                     0,       0,       100],
-    ["mcu.temp_v25",              1.43,       1,         2],
-    ["mcu.temp_slope",          0.0043,   0.001,      0.01],
-    ["normal.duty_limit",          0.9,    0.05,         1],
-    ["normal.timeout_ms",          250,      10,     60000],
-    ["pid.kp",                     0.5,       0,        10],
-    ["pid.ki",                       7,       0,        50],
-    ["pid.kd",                       0,       0,         1],
-    ["pid.kp_i",                  0.02,       0,        10],
-    ["pid.ki_i",                     2,       0,       500],
-    ["slow.duty_limit",            0.3,    0.05,         1],
-    ["slow.timeout_ms",              0,       0,     60000],
-    ["stream.rate",                 10,       1,        50]
+    [
+      "aux5v.shunt_ohms",
+      0.01,
+      0.001,
+      10
+    ],
+    [
+      "aux5v.i_max",
+      6,
+      0.1,
+      20
+    ],
+    [
+      "aux5v.i_warn",
+      4.8,
+      0,
+      20
+    ],
+    [
+      "aux5v.v_warn",
+      4.7,
+      0,
+      6
+    ],
+    [
+      "batt.divider_ratio",
+      5.7,
+      1,
+      20
+    ],
+    [
+      "batt.full_v",
+      12.6,
+      5,
+      30
+    ],
+    [
+      "batt.low_v",
+      9.9,
+      5,
+      30
+    ],
+    [
+      "batt.critical_v",
+      9,
+      5,
+      30
+    ],
+    [
+      "batt.hyst_v",
+      0.2,
+      0,
+      2
+    ],
+    [
+      "current.scale_left",
+      3.333,
+      0.1,
+      20
+    ],
+    [
+      "current.scale_right",
+      3.333,
+      0.1,
+      20
+    ],
+    [
+      "reflex.enable",
+      0,
+      0,
+      1
+    ],
+    [
+      "coast.park_vel",
+      0.15,
+      0,
+      5
+    ],
+    [
+      "coast.park_ms",
+      50,
+      10,
+      1000
+    ],
+    [
+      "coast.max_ms",
+      8000,
+      500,
+      30000
+    ],
+    [
+      "hold.kp",
+      2,
+      0,
+      20
+    ],
+    [
+      "hold.max_vel",
+      0.5,
+      0,
+      5
+    ],
+    [
+      "hold.deadband",
+      0.02,
+      0,
+      1
+    ],
+    [
+      "hold.max_ms",
+      30000,
+      0,
+      600000
+    ],
+    [
+      "current.offset_left",
+      0,
+      -5,
+      5
+    ],
+    [
+      "current.offset_right",
+      0,
+      -5,
+      5
+    ],
+    [
+      "current_loop.enable",
+      0,
+      0,
+      1
+    ],
+    [
+      "encoder.filter_alpha",
+      0.2,
+      0.01,
+      1
+    ],
+    [
+      "encoder.invert_left",
+      1,
+      0,
+      1
+    ],
+    [
+      "encoder.invert_right",
+      0,
+      0,
+      1
+    ],
+    [
+      "hb.timeout_ms",
+      500,
+      10,
+      60000
+    ],
+    [
+      "kin.track_width",
+      0.175,
+      0.05,
+      1
+    ],
+    [
+      "kin.wheel_radius",
+      0.05,
+      0.01,
+      0.5
+    ],
+    [
+      "kin.counts_per_rev",
+      2249,
+      0,
+      10000
+    ],
+    [
+      "kin.max_v",
+      1,
+      0.05,
+      5
+    ],
+    [
+      "kin.max_w",
+      3,
+      0.1,
+      20
+    ],
+    [
+      "kin.max_accel",
+      5,
+      0,
+      100
+    ],
+    [
+      "motor.invert_left",
+      1,
+      0,
+      1
+    ],
+    [
+      "motor.invert_right",
+      0,
+      0,
+      1
+    ],
+    [
+      "motor.v_max",
+      12,
+      0,
+      30
+    ],
+    [
+      "motor.i_max",
+      4,
+      0,
+      20
+    ],
+    [
+      "motor.i_fault",
+      5,
+      0,
+      20
+    ],
+    [
+      "motor.i_max_time_ms",
+      500,
+      100,
+      30000
+    ],
+    [
+      "motor.max_duty_accel",
+      5,
+      0,
+      100
+    ],
+    [
+      "motor.max_rads",
+      8.0,
+      0.1,
+      100
+    ],
+    [
+      "motor.stall_duty",
+      0.2,
+      0,
+      1
+    ],
+    [
+      "motor.stall_vel",
+      0.5,
+      0,
+      50
+    ],
+    [
+      "motor.stall_ms",
+      500,
+      0,
+      10000
+    ],
+    [
+      "encoder.obs_enable",
+      0,
+      0,
+      1
+    ],
+    [
+      "encoder.obs_alpha",
+      0.4,
+      0,
+      1
+    ],
+    [
+      "encoder.obs_beta",
+      0.08,
+      0,
+      1
+    ],
+    [
+      "ff.static",
+      0.03,
+      0,
+      5
+    ],
+    [
+      "ff.visc",
+      0.004,
+      0,
+      2
+    ],
+    [
+      "ff.inertia",
+      0.052,
+      0,
+      2
+    ],
+    [
+      "pid.kp_c",
+      0.1,
+      0,
+      20
+    ],
+    [
+      "pid.ki_c",
+      0,
+      0,
+      100
+    ],
+    [
+      "mcu.temp_v25",
+      1.43,
+      1,
+      2
+    ],
+    [
+      "mcu.temp_slope",
+      0.0043,
+      0.001,
+      0.01
+    ],
+    [
+      "normal.duty_limit",
+      0.9,
+      0.05,
+      1
+    ],
+    [
+      "normal.timeout_ms",
+      250,
+      10,
+      60000
+    ],
+    [
+      "pid.kp",
+      0.5,
+      0,
+      10
+    ],
+    [
+      "pid.ki",
+      7,
+      0,
+      50
+    ],
+    [
+      "pid.kd",
+      0,
+      0,
+      1
+    ],
+    [
+      "pid.kp_i",
+      0.02,
+      0,
+      10
+    ],
+    [
+      "pid.ki_i",
+      2,
+      0,
+      500
+    ],
+    [
+      "slow.duty_limit",
+      0.3,
+      0.05,
+      1
+    ],
+    [
+      "slow.timeout_ms",
+      0,
+      0,
+      60000
+    ],
+    [
+      "stream.rate",
+      10,
+      1,
+      50
+    ]
   ],
-
   "int_keys": [],
   "_int_keys_comment": "EMPTY DELIBERATELY. Since FW 1.11.0 (B.16) the MC1 formats every GET value as %d.%06d, integers included, so kin.counts_per_rev reads back as 2249.000000. See config_decimals below.",
   "config_decimals": 6,
-
-  "wheel_modes": ["DUTY", "CURRENT"],
-  "warns": ["BATT", "AUX5V"],
+  "wheel_modes": [
+    "DUTY",
+    "CURRENT"
+  ],
+  "warns": [
+    "BATT",
+    "AUX5V"
+  ],
   "battery": "percent",
   "aux5v": true,
-
   "_vendor_extensions_comment": "coast_park and stop_hold are NOT ORCP v1.1. A host that must run against any ORCP device should not depend on them.",
   "coast_park": true,
   "stop_hold": true,
-
   "_not_modelled_comment": "Parts of the real MC1 this profile does not reproduce. Declarative only -- announced at start-up so an unmodelled command reads as a stated limitation rather than a broken tool. BOOTLOADER is deliberately absent and should stay so: a simulator cannot reset into a bootloader, and faking success would let a flash tool report success against something that flashed nothing. See docs/vendor-surface-gap.md.",
   "not_modelled": {
-    "commands": ["CAPS", "ENC", "PID", "SERIAL", "BOOTLOADER"],
-    "status_fields": ["active", "il", "ir", "isense", "casc", "reflex", "eff_lim", "mcu_temp",
-                      "aux5v_v", "aux5v_i", "aux5v_warn",
-                      "encstall_l", "encstall_r", "mfault_l", "mfault_r"]
+    "commands": [
+      "CAPS",
+      "ENC",
+      "PID",
+      "SERIAL",
+      "BOOTLOADER"
+    ],
+    "status_fields": [
+      "active",
+      "il",
+      "ir",
+      "isense",
+      "casc",
+      "reflex",
+      "eff_lim",
+      "mcu_temp",
+      "aux5v_v",
+      "aux5v_i",
+      "aux5v_warn",
+      "encstall_l",
+      "encstall_r",
+      "mfault_l",
+      "mfault_r"
+    ]
   }
 }

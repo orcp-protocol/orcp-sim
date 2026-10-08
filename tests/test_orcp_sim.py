@@ -72,7 +72,11 @@ def test_enable(sim):
 
 def test_wheel_defaults_to_radps(sim):
     # The default (no mode=) MUST be rad/s closed-loop velocity, not duty.
-    assert sim.handle_command("WHEEL l=5 r=-5") == "OK WHEEL l=5.000 r=-5.000"
+    # ⚠️ Use a target well inside the ceiling so this stays a PROTOCOL test and
+    # does not start failing when the physical model changes.
+    v = _ceiling(sim) * 0.5
+    r = sim.handle_command(f"WHEEL l={v:.3f} r={-v:.3f}")
+    assert r == f"OK WHEEL l={v:.3f} r={-v:.3f}"
     assert sim.handle_command("STATUS").count("mode=VELOCITY") == 1
 
 
@@ -267,7 +271,7 @@ def test_mc1_identity(mc1):
     r = mc1.handle_command("INFO")
     assert "hw=MC1" in r
     assert "bl=1.4.0" in r
-    assert "fw=1.14.3" in r
+    assert "fw=1.17.0" in r
     assert "level=2" in r
     assert "vendor=" not in r          # MC1 INFO carries no vendor/model fields
 
@@ -818,6 +822,17 @@ def test_profile_declares_what_it_does_not_model(mc1, sim):
 # they are not — their RATIO is the turn radius.
 # ---------------------------------------------------------------------------
 
+def _ceiling(sim):
+    """The velocity ceiling the sim will scale against — DERIVED, never hard-coded.
+
+    ⚠️ Tests that hard-coded this (as 0.30 x 20.9 = 6.27) all broke the moment
+    the physical model changed, which is the same trap as hard-coding wheel
+    targets from another profile's wheel_radius. Ask the sim.
+    """
+    from orcp_sim import MAX_MOTOR_RADS
+    return sim.duty_limit * sim.cfg.get("motor.max_rads", MAX_MOTOR_RADS)
+
+
 def _wheels(resp):
     """Pull the two wheel targets out of an OK CMD_VEL / OK WHEEL response."""
     kv = dict(re.findall(r"(\w+)=(-?[\d.]+)", resp))
@@ -859,7 +874,8 @@ def test_arc_ratio_held_when_over_the_ceiling(sim):
     sim.handle_command("PRESET SLOW")
     sim.handle_command("ENABLE ON")
     l, r = _wheels(sim.handle_command("CMD_VEL v=0.30 w=0.750"))
-    assert r == pytest.approx(6.27, abs=0.01), "outer wheel should sit at the ceiling"
+    assert r == pytest.approx(_ceiling(sim), abs=0.01), \
+        "outer wheel should sit at the ceiling"
     assert r / l == pytest.approx(1.56, abs=0.01), "commanded ratio must survive"
     assert _radius(l, r) == pytest.approx(0.40, abs=0.01)
 
@@ -890,10 +906,13 @@ def test_under_the_ceiling_is_untouched(sim):
     """Scaling must not alter a pair that already fits."""
     sim.handle_command("PRESET SLOW")
     sim.handle_command("ENABLE ON")
-    exp_l, exp_r = _expected_wheels(sim, 0.20, 0.500)
-    assert max(abs(exp_l), abs(exp_r)) < sim.duty_limit * 20.9, \
-        "test precondition: this pair must already fit under the ceiling"
-    l, r = _wheels(sim.handle_command("CMD_VEL v=0.20 w=0.500"))
+    # scale the command down until the pair genuinely fits, so the test is
+    # about "untouched when it fits" rather than about any particular number
+    v, w = 0.20, 0.500
+    while max(map(abs, _expected_wheels(sim, v, w))) >= _ceiling(sim):
+        v, w = v / 2, w / 2
+    exp_l, exp_r = _expected_wheels(sim, v, w)
+    l, r = _wheels(sim.handle_command(f"CMD_VEL v={v:.4f} w={w:.4f}"))
     assert l == pytest.approx(exp_l, abs=0.001)
     assert r == pytest.approx(exp_r, abs=0.001)
 
@@ -977,10 +996,13 @@ def test_cmd_vel_echo_unchanged_when_nothing_is_clamped(sim):
     """A request that already fits must echo back identically."""
     sim.handle_command("PRESET SLOW")
     sim.handle_command("ENABLE ON")
-    r = sim.handle_command("CMD_VEL v=0.20 w=0.500")
+    v, w = 0.20, 0.500
+    while max(map(abs, _expected_wheels(sim, v, w))) >= _ceiling(sim):
+        v, w = v / 2, w / 2
+    r = sim.handle_command(f"CMD_VEL v={v:.4f} w={w:.4f}")
     kv = dict(re.findall(r"(\w+)=(-?[\d.]+)", r))
-    assert float(kv["v"]) == pytest.approx(0.20, abs=1e-3)
-    assert float(kv["w"]) == pytest.approx(0.500, abs=1e-3)
+    assert float(kv["v"]) == pytest.approx(v, abs=1e-3)
+    assert float(kv["w"]) == pytest.approx(w, abs=1e-3)
 
 
 def test_wheel_vel_echoes_the_accepted_value(sim):
@@ -989,5 +1011,6 @@ def test_wheel_vel_echoes_the_accepted_value(sim):
     sim.handle_command("ENABLE ON")
     r = sim.handle_command("WHEEL l=4.688 r=7.312")
     kv = dict(re.findall(r"(\w+)=(-?[\d.]+)", r))
-    assert float(kv["r"]) == pytest.approx(6.27, abs=0.01), "accepted, not requested"
+    assert float(kv["r"]) == pytest.approx(_ceiling(sim), abs=0.01), \
+        "accepted, not requested"
     assert float(kv["r"]) / float(kv["l"]) == pytest.approx(1.56, abs=0.01)
