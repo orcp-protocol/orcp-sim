@@ -2,7 +2,7 @@
 
 ---
 
-## Unreleased
+## 0.3.0 — 2026-10-14
 
 ### ⚠️ `CMD_VEL` answered `wl`/`wr`; the spec and MC1 both say `tl`/`tr`
 
