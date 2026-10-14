@@ -2,6 +2,32 @@
 
 ---
 
+## 0.3.1 — 2026-10-14
+
+### `mc1` profile: `kin.max_v` default 1.0 → 0.40
+
+The `mc1` profile matched MC1 firmware on every kinematic default except this
+one. The board derives it rather than choosing it:
+
+```
+kin.max_v = motor.max_rads × kin.wheel_radius = 8.0 × 0.050 = 0.40 m/s
+```
+
+i.e. the fastest the reference drivetrain can actually turn its wheels. At 1.0
+the clamp sat above anything the model could reach, so it never engaged.
+
+⚠️ 1.0 is also the value the Getting Started guides instructed readers to set
+until Rev C removed it. A reader working through Appendix A against the
+simulator would `GET kin.max_v`, see the number the guide had just told them was
+wrong, and have no way to tell which to believe — while Appendix A claims the
+profile carries "the same defaults" as the board.
+
+Nothing else changes: `motor.max_rads`, `kin.wheel_radius`, `kin.track_width`,
+`kin.counts_per_rev` and `kin.max_w` were already correct. The generic `base`
+profile is deliberately a different machine and is untouched.
+
+---
+
 ## 0.3.0 — 2026-10-14
 
 ### ⚠️ `CMD_VEL` answered `wl`/`wr`; the spec and MC1 both say `tl`/`tr`
